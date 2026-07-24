@@ -1263,8 +1263,8 @@ Flights.new = function(){
       <div id="nfMapWrap" style="display:none;margin-top:10px">
         <div id="nfMap"></div>
         <div class="btn-row" style="margin-top:8px">
-          <label class="btn sm">📷 Add location screenshot<input type="file" id="nfShot" accept="image/*" capture="environment" style="display:none" onchange="Flights.addShot(this)"></label>
-          <span id="nfShotName" class="hint">Optional — attach a screenshot of the map/site.</span>
+          <label class="btn sm">📷 Add screenshot of the area<input type="file" id="nfShot" accept="image/*" capture="environment" style="display:none" onchange="Flights.addShot(this)"></label>
+          <span id="nfShotName" class="hint">Optional — attach a screenshot of the map / area.</span>
         </div>
         <img id="nfShotPrev" alt="Location screenshot" style="display:none;max-width:100%;border-radius:8px;margin-top:8px;border:1px solid var(--line)">
       </div>
@@ -1415,6 +1415,8 @@ function airspaceBlock(f, appKey, appName){
     </select>
     <div class="field" style="margin-top:8px"><label>Notes</label><input value="${U.esc(a.notes||'')}" onchange="Flights.setAir('${appKey}','notes',this.value)"></div>
     <label class="tick ${a.screenshot?'on':''}" onclick="Flights.toggleAir('${appKey}','screenshot')"><span class="box">✓</span><span class="txt">Screenshot saved to job folder</span></label>
+    <div class="btn-row" style="margin-top:6px"><label class="btn sm">📷 Attach ${appName} screenshot<input type="file" accept="image/*" style="display:none" onchange="Flights.setAirShot('${appKey}',this)"></label>${a.screenshotImg?`<button class="btn sm ghost" onclick="Flights.clearAirShot('${appKey}')">Remove</button>`:''}</div>
+    ${a.screenshotImg?`<img src="${a.screenshotImg}" alt="${appName} screenshot" style="max-width:100%;border-radius:8px;margin-top:6px;border:1px solid var(--line)">`:''}
     ${a.result==='Approval required'? `<div class="card" style="margin-top:8px;background:var(--warning-bg)">
       <div class="section-title">Approval obtained — sub-record</div>
       <div class="inline"><div class="field"><label class="req">Approval reference #</label><input value="${U.esc(appr.ref||'')}" onchange="Flights.setApproval('${appKey}','ref',this.value)"></div>
@@ -1569,6 +1571,8 @@ function refreshGate(){ const g=$('#approveGate'); if(g && CUR) g.innerHTML = ap
 /* Planning field handlers */
 Flights.setPlan=async(k,v)=>{ CUR.planning[k]=v; await saveFlight(CUR); refreshGate(); };
 Flights.setAir=async(app,k,v)=>{ CUR.planning[app]=CUR.planning[app]||{}; CUR.planning[app][k]=v; await saveFlight(CUR,'planning',app+' '+k+'='+v); renderFlightFile(); };
+Flights.setAirShot=async(app,input)=>{ const file=input.files&&input.files[0]; if(!file) return; try{ const d=await resizeImage(file,1280,0.72); CUR.planning[app]=CUR.planning[app]||{}; CUR.planning[app].screenshotImg=d; CUR.planning[app].screenshot=true; await saveFlight(CUR,'planning',app+' screenshot attached'); renderFlightFile(); }catch(e){ toast('Could not read image','err'); } };
+Flights.clearAirShot=async(app)=>{ if(CUR.planning[app]) CUR.planning[app].screenshotImg=null; await saveFlight(CUR); renderFlightFile(); };
 Flights.toggleAir=async(app,k)=>{ CUR.planning[app]=CUR.planning[app]||{}; CUR.planning[app][k]=!CUR.planning[app][k]; await saveFlight(CUR); refreshGate(); const t=event.currentTarget; t.classList.toggle('on'); };
 Flights.setApproval=async(app,k,v)=>{ CUR.planning[app].approval=CUR.planning[app].approval||{}; CUR.planning[app].approval[k]=v; await saveFlight(CUR); refreshGate(); };
 Flights.toggleScope=async(k)=>{ CUR.planning.scopeFlags[k]=!CUR.planning.scopeFlags[k]; await saveFlight(CUR,'scope',k); renderFlightFile(); };
@@ -2070,7 +2074,7 @@ Flights.submit=async(id)=>{
 
 /* ---- SUBMITTED: approve & file ---- */
 function submittedStage(f){
-  return `${flightSummaryReadonly(f)}${locationBlock(f)}
+  return `${flightSummaryReadonly(f)}${locationBlock(f)}${airspaceImagesBlock(f)}
     <div class="card" style="background:var(--panel-2)"><div class="section-title">Approve &amp; File (Chief Remote Pilot or designated approver)</div>
       <p class="muted" style="font-size:.86rem">Review the read-only summary above. On approval the file becomes immutable and is archived as the definitive audit record.</p>
       ${Alerts.blockersFor('flight',f.id).length?`<div class="alert blocker"><span class="ai">🔴</span><div class="abody"><div class="atitle">Open blockers must be resolved before filing (B16).</div></div></div>`:''}
@@ -2091,7 +2095,7 @@ Flights.close=async(id)=>{
   toast('Flight '+id+' filed — read-only','ok'); CUR=f; renderFlightFile();
 };
 
-function completedStage(f){ return flightSummaryReadonly(f) + locationBlock(f) + `<div class="card no-print"><div class="section-title">Amendments</div>${amendmentsHtml(f)}</div>`; }
+function completedStage(f){ return flightSummaryReadonly(f) + locationBlock(f) + airspaceImagesBlock(f) + `<div class="card no-print"><div class="section-title">Amendments</div>${amendmentsHtml(f)}</div>`; }
 function closedStage(f){
   const reason=f.cancelled?f.cancelled.reason:(f.abort?f.abort.reason:'');
   return `<div class="card"><div class="alert ${f.status==='CANCELLED'?'blocker':'warning'}"><span class="ai">${f.status==='CANCELLED'?'⛔':'🟠'}</span><div class="abody"><div class="atitle">Flight ${f.status}</div><div class="awhy">${U.esc(reason||'')}</div></div></div></div>`
@@ -2110,6 +2114,16 @@ function locationBlock(f){
     ${hasCoord?`<div class="kv"><span class="k">Coordinates</span><span class="v mono">${f.coordinates.lat.toFixed(5)}, ${f.coordinates.lon.toFixed(5)}</span></div>
       <div class="btn-row no-print" style="margin:8px 0"><a class="btn sm" href="https://www.google.com/maps?q=${f.coordinates.lat},${f.coordinates.lon}" target="_blank" rel="noopener">🗺 Open in Google Maps</a></div>`:''}
     ${f.locationImage?`<img src="${f.locationImage}" alt="Location screenshot" style="max-width:100%;border-radius:8px;border:1px solid var(--line)">`:'<div class="muted no-print" style="font-size:.82rem">No location screenshot attached.</div>'}
+  </div>`;
+}
+
+/* Airspace-check screenshots (OpenSky / ok2fly) for the record */
+function airspaceImagesBlock(f){
+  const os=(f.planning&&f.planning.openSky&&f.planning.openSky.screenshotImg), o2=(f.planning&&f.planning.ok2fly&&f.planning.ok2fly.screenshotImg);
+  if(!os && !o2) return '';
+  return `<div class="card"><div class="section-title">Airspace check screenshots</div>
+    ${os?`<div style="margin-bottom:10px"><div class="hint">OpenSky</div><img src="${os}" alt="OpenSky screenshot" style="max-width:100%;border-radius:8px;border:1px solid var(--line)"></div>`:''}
+    ${o2?`<div><div class="hint">ok2fly</div><img src="${o2}" alt="ok2fly screenshot" style="max-width:100%;border-radius:8px;border:1px solid var(--line)"></div>`:''}
   </div>`;
 }
 
@@ -2167,6 +2181,8 @@ function printFlight(id){
       <table><tr><th>Check</th><th>Result</th><th>Notes</th></tr>
         <tr><td>OpenSky</td><td>${U.esc(pl.openSky.result||'—')}</td><td>${U.esc(pl.openSky.notes||'')}</td></tr>
         <tr><td>ok2fly</td><td>${U.esc(pl.ok2fly.result||'—')}</td><td>${U.esc(pl.ok2fly.notes||'')}</td></tr></table>
+      ${pl.openSky.screenshotImg?`<div style="margin:4px 0"><b>OpenSky screenshot:</b><br><img src="${pl.openSky.screenshotImg}" style="max-width:100%;max-height:300px;border:1px solid #999;margin-top:4px"></div>`:''}
+      ${pl.ok2fly.screenshotImg?`<div style="margin:4px 0"><b>ok2fly screenshot:</b><br><img src="${pl.ok2fly.screenshotImg}" style="max-width:100%;max-height:300px;border:1px solid #999;margin-top:4px"></div>`:''}
       <table><tr><th>Aerodrome</th><th>Dist (NM)</th><th>CTAF</th><th>Notes</th></tr>
         ${(pl.aerodromes||[]).map(a=>`<tr><td>${U.esc(a.name||'')}</td><td>${a.distNm??''}</td><td>${U.esc(a.ctaf||'')}</td><td>${U.esc(a.notes||'')}</td></tr>`).join('')||'<tr><td colspan=4>'+(pl.ctafNone?'No aerodromes within range (verified in both apps)':'—')+'</td></tr>'}</table>
       <div>NOTAMs checked: ${yn(pl.notams&&pl.notams.checked)} — ${U.esc((pl.notams&&pl.notams.notes)||'')}</div>
