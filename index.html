@@ -231,6 +231,15 @@ table.data td.actions{text-align:right;white-space:nowrap}
 #backupBanner.show{display:flex}
 #backupBanner .bx{margin-left:auto;background:none;border:0;color:var(--ink-3);cursor:pointer;font-size:1.1rem}
 
+.guide h4{margin:16px 0 6px;font-size:.92rem;color:var(--ink)}
+.guide h4:first-child{margin-top:0}
+.guide p{line-height:1.55;margin:0 0 8px}
+.guide ul{margin:6px 0 10px;padding-left:20px}
+.guide li{margin:3px 0;line-height:1.5}
+.guide a{word-break:break-word}
+.guidecard{display:flex;gap:11px;align-items:flex-start;padding:11px 13px;border:1px solid var(--line);border-radius:var(--radius-sm);cursor:pointer;background:var(--panel);transition:background .12s}
+.guidecard:hover{background:var(--panel-2)}
+.guidecard .gi{font-size:1.2rem;line-height:1.2}
 .empty{text-align:center;padding:34px 20px;color:var(--ink-3)}
 .empty .big{font-size:2rem;margin-bottom:8px}
 .sig-line{display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end}
@@ -555,11 +564,11 @@ async function audit(action, entityType, entityId, detail){
  * ---------------------------------------------------------------- */
 const Alerts = (function(){
   // Create or update an alert keyed by (ruleKey + entity) so we don't duplicate.
-  async function raise({severity, message, why, fix, entityType, entityId, ruleKey, dismissible}){
+  async function raise({severity, message, why, fix, entityType, entityId, ruleKey, dismissible, helpTopic}){
     const key = ruleKey || (severity+':'+message+':'+entityType+':'+entityId);
     let a = State.alerts.find(x=>x.ruleKey===key && !x.resolvedAt);
-    if(a){ a.severity=severity; a.message=message; a.why=why; a.fix=fix; await Store.put('alerts',a); return a; }
-    a = { id:U.uid(), ruleKey:key, severity, message, why:why||'', fix:fix||'',
+    if(a){ a.severity=severity; a.message=message; a.why=why; a.fix=fix; if(helpTopic) a.helpTopic=helpTopic; await Store.put('alerts',a); return a; }
+    a = { id:U.uid(), ruleKey:key, severity, message, why:why||'', fix:fix||'', helpTopic:helpTopic||null,
           entityType, entityId, dismissible: dismissible!==false && severity!=='blocker',
           createdAt:U.nowISO(), resolvedAt:null };
     await Store.put('alerts', a); State.alerts.push(a);
@@ -909,8 +918,10 @@ const Views = {}; // populated below
 function alertRow(a){
   const icon = a.severity==='blocker'?'🔴':a.severity==='warning'?'🟠':'🔵';
   const link = alertLink(a);
+  const topic = a.helpTopic || guessTopic(a);
   const actions = [];
   if(link) actions.push(`<button class="btn sm ghost" onclick="${link}">Open</button>`);
+  if(topic) actions.push(`<button class="btn sm ghost" onclick="Guides.show('${topic}')">ⓘ Guide</button>`);
   if(a.dismissible) actions.push(`<button class="btn sm ghost" onclick="dismissAlertPrompt('${a.id}')">Dismiss</button>`);
   return `<div class="alert ${a.severity}">
     <span class="ai">${icon}</span>
@@ -935,6 +946,160 @@ async function dismissAlertPrompt(id){
   const reason = await confirmDialog({title:'Dismiss alert', message:'Recording a reason keeps the audit trail complete. This alert will move to Alert History.', confirmLabel:'Dismiss', requireReason:true});
   if(reason){ await Alerts.dismiss(id, reason); await recompute(); nav(App.route); toast('Alert dismissed'); }
 }
+// Infer a help topic from an alert's wording (so existing alerts get guides without re-seeding)
+function guessTopic(a){
+  const s = (a.message+' '+(a.why||'')).toLowerCase();
+  if(/registration/.test(s)) return 'drone-registration';
+  if(/recency|repl|pilot/.test(s)) return 'pilot-recency';
+  if(/maintenance|defect|grounding|schedule/.test(s)) return 'maintenance';
+  if(/battery|cycle|swelling/.test(s)) return 'battery';
+  if(/atsb|occurrence|incident/.test(s)) return 'atsb';
+  if(/casa|notify|significant|change|schedule 1|approval/.test(s)) return 'change-events';
+  return null;
+}
+
+/* ================================================================ *
+ *  GUIDES — contextual help content (plain-English + CASA links)
+ *  Not legal advice — pointers to the authoritative CASA sources.
+ * ================================================================ */
+const Guides = {
+  topics: {
+    'drone-registration': {
+      title: 'Drone registration & expiry',
+      icon: '🛩',
+      body: `
+        <h4>What "registration expiry" means</h4>
+        <p>Your drones are registered with CASA as RPA (remotely piloted aircraft), and that registration is <b>time-limited</b>. For drones flown commercially / on behalf of an ReOC holder it must be renewed periodically — <b>registration for commercially operated drones runs for 12 months</b>.</p>
+        <p>In this app the fleet register holds a <b>registration expiry date</b> per aircraft and treats it as a compliance gate:</p>
+        <ul>
+          <li>🟠 a <b>warning</b> fires 30 days before expiry, and</li>
+          <li>🔴 an <b>expired</b> registration is a hard blocker — the drone <b>cannot be assigned to a flight</b>.</li>
+        </ul>
+        <p>Flying an unregistered/expired drone commercially is an offence, which is why the app grounds the aircraft in software until it's renewed.</p>
+        <h4>Your fleet — worth checking</h4>
+        <p>The last certificate on file for both the <b>Inspire 2</b> (serial 0A0LH7P009009T) and <b>Mavic 2 Pro</b> (163CH7QR0A2S8R) shows expiry <b>26 January 2023</b>, registered to AVS Productions (Australasia) in the "25 kg or less" class. No later renewal was found in your Drone folder — confirm in myCASA whether they were renewed.</p>
+        <h4>How to fix it in this app</h4>
+        <p>Fleet ▸ Drones ▸ <b>Edit</b> the aircraft ▸ update <b>Reg. expiry</b> to the current date from myCASA ▸ Save. The blocker clears automatically.</p>
+        <h4>How you register / renew a drone (CASA)</h4>
+        <p>It's all done through the <b>myCASA</b> portal: log in with a Digital Identity, link your <b>Aviation Reference Number (ARN)</b> — for a fleet, an <b>organisation ARN</b> so others can manage it — provide details and ID, select the drone's manufacturer/model, enter its <b>serial number</b> (the same serial on your ReOC Schedule 1), review the declaration, and pay. Repeat for each aircraft. Renewals and detail changes (e.g. a serial swap) are done the same way.</p>
+        <p><b>Registration is separate from your ReOC and from pilot RePLs</b> — all three must be current. Adding a new aircraft also means a <b>Schedule 1 notification</b> to CASA within 21 days (the app logs this as a Change Event).</p>`,
+      links: [
+        {label:'CASA — Register your drone', url:'https://www.casa.gov.au/drones/register-your-drone'},
+        {label:'CASA — How to register your drone', url:'https://www.casa.gov.au/drones/register-your-drone/how-register-your-drone'},
+        {label:'myCASA portal', url:'https://mycasa.casa.gov.au/'}
+      ]
+    },
+    'pilot-recency': {
+      title: 'RePL & pilot recency',
+      icon: '🧑‍✈️',
+      body: `
+        <h4>What a RePL is</h4>
+        <p>A <b>Remote Pilot Licence (RePL)</b> is the CASA licence a pilot holds to fly commercially under an ReOC. Each pilot's RePL number is recorded in Personnel; the app won't let someone be <b>Pilot-in-Command on a new flight</b> without it.</p>
+        <h4>Recency</h4>
+        <p>Your ops manual requires a pilot to have <b>at least one logged flight in the last 90 days</b> to stay current (editable in Settings). A lapsed pilot shows a 🟠 warning and is blocked as PIC until a recency note is recorded.</p>
+        <h4>How to fix it in this app</h4>
+        <p>Personnel ▸ find the pilot ▸ <b>Recency</b> ▸ record the check-flight note, date and supervisor. That clears the block. To add a missing RePL number, use <b>Edit</b> on the person.</p>
+        <p>RePLs, the ReOC and drone registration are three separate CASA credentials — all must be current.</p>`,
+      links: [
+        {label:'CASA — Get your remote pilot licence (RePL)', url:'https://www.casa.gov.au/drones/get-your-operator-credentials/get-your-remote-pilot-licence-repl'},
+        {label:'CASA — Recency & currency', url:'https://www.casa.gov.au/drones'}
+      ]
+    },
+    'reoc': {
+      title: 'Your ReOC & CASA changes',
+      icon: '📜',
+      body: `
+        <h4>What the ReOC is</h4>
+        <p>The <b>Remote Operator's Certificate (ReOC)</b> authorises your organisation to fly drones commercially within an approved scope. Your aircraft are listed in <b>Schedule 1</b>.</p>
+        <h4>Significant vs non-significant changes</h4>
+        <ul>
+          <li>🔴 <b>Significant</b> — needs CASA <b>approval before</b> you implement (key personnel, new aircraft type, scope changes, entity/name changes). Assessment can take up to 70 business days.</li>
+          <li>🟡 <b>Non-significant</b> — go ahead, but <b>notify CASA within 21 days</b> via myCASA (a new drone of an approved type, retirements, serial changes).</li>
+        </ul>
+        <p>The <b>Change Events</b> module tracks both and runs the 21-day countdown for you.</p>`,
+      links: [
+        {label:'CASA — Vary your ReOC', url:'https://www.casa.gov.au/drones/drone-rules/vary-your-remotely-piloted-aircraft-operators-certificate'},
+        {label:'myCASA portal', url:'https://mycasa.casa.gov.au/'}
+      ]
+    },
+    'maintenance': {
+      title: 'Maintenance & defects',
+      icon: '🛠',
+      body: `
+        <h4>Scheduled maintenance</h4>
+        <p>Each drone carries recurring schedule items (basic service, detailed inspection, firmware, controller checks). The app warns as they approach and <b>blocks assignment</b> when an item is overdue.</p>
+        <h4>Defects</h4>
+        <ul>
+          <li><b>Grounding</b> defect → aircraft becomes unavailable until rectified and the Maintenance Controller signs off.</li>
+          <li><b>Monitor</b> defect → a 🟠 warning to review before flight.</li>
+        </ul>
+        <h4>How to fix it in this app</h4>
+        <p>Fleet ▸ Maintenance ▸ <b>Complete</b> the schedule item (records who/what/when), or <b>Rectify</b> the open defect. Completing resets the maintenance clock.</p>`,
+      links: [
+        {label:'CASA — Drone safety & maintenance', url:'https://www.casa.gov.au/drones'}
+      ]
+    },
+    'battery': {
+      title: 'Battery register',
+      icon: '🔋',
+      body: `
+        <h4>Why batteries are tracked</h4>
+        <p>LiPo batteries are the most failure-prone component. Each is tracked individually with a <b>cycle count</b> and <b>cycle limit</b> (default 200). The app warns at 80% and marks a battery for retirement at 100%.</p>
+        <h4>Swelling / damage</h4>
+        <p>A swollen or damaged battery must be <b>quarantined</b> immediately — it becomes unselectable for flight until inspected. Two of your Inspire 2 batteries were flagged as possibly swelling (Oct 2025) and are seeded as Quarantined.</p>
+        <h4>How to fix it in this app</h4>
+        <p>Fleet ▸ Batteries ▸ <b>Edit</b> ▸ set status (In service / Quarantined / Retired) and add a condition note.</p>`,
+      links: []
+    },
+    'atsb': {
+      title: 'Reporting occurrences (ATSB)',
+      icon: '⚠️',
+      body: `
+        <h4>When to report</h4>
+        <p>A <b>serious incident or accident</b> is immediately reportable to the <b>ATSB</b>. Notify as soon as possible and submit a written report <b>within 72 hours</b>. The app won't let a flight file reach COMPLETED until the ATSB record (notification time, reference, who notified) is filled.</p>
+        <h4>How to record it in this app</h4>
+        <p>On the flight's Post-Operation checklist, set Incidents = <b>Yes</b> ▸ severity ▸ complete the ATSB fields.</p>`,
+      links: [
+        {label:'ATSB — Report an aviation occurrence', url:'https://www.atsb.gov.au/mandatory/aviation'}
+      ]
+    },
+    'change-events': {
+      title: 'CASA change notifications',
+      icon: '⇄',
+      body: `
+        <h4>Two buckets</h4>
+        <ul>
+          <li>🔴 <b>Significant</b> — CASA <b>approval before</b> implementing.</li>
+          <li>🟡 <b>Non-significant</b> — <b>notify within 21 days</b> via myCASA (no fee).</li>
+        </ul>
+        <p>An overdue non-significant notification is a compliance breach, so the app keeps a non-dismissible alert until you record the myCASA reference.</p>
+        <h4>How to clear it in this app</h4>
+        <p>Change Events ▸ open the event ▸ record the myCASA notification date + reference (non-significant) or the CASA approval (significant).</p>`,
+      links: [
+        {label:'myCASA portal', url:'https://mycasa.casa.gov.au/'},
+        {label:'CASA — Vary your ReOC', url:'https://www.casa.gov.au/drones/drone-rules/vary-your-remotely-piloted-aircraft-operators-certificate'}
+      ]
+    },
+    'backups': {
+      title: 'Backups & your data',
+      icon: '💾',
+      body: `
+        <h4>Where your data lives</h4>
+        <p>Records are stored in your browser and synced to your Supabase cloud, so every device sees the same data. Still, export a backup regularly — Settings ▸ <b>Export Backup</b> downloads the whole database as one JSON file. A reminder appears if no backup has been taken in 14 days.</p>`,
+      links: []
+    }
+  },
+  show(slug){
+    const g = this.topics[slug]; if(!g){ toast('Guide not found','err'); return; }
+    const links = (g.links||[]).length
+      ? `<div class="section-title" style="margin-top:14px">Helpful links</div>${g.links.map(l=>`<div style="margin:4px 0">🔗 <a href="${l.url}" target="_blank" rel="noopener">${U.esc(l.label)}</a></div>`).join('')}`
+      : '';
+    Modal.open({ title:`${g.icon||'ⓘ'}  ${g.title}`, wide:true,
+      body:`<div class="guide">${g.body}${links}<p class="hint" style="margin-top:14px">This guide is a plain-English summary to help you use the app — always rely on CASA's official pages and your Operations Manual for the authoritative rules.</p></div>`,
+      footer:`<button class="btn primary" onclick="Modal.closeAll()">Got it</button>` });
+  },
+  list(){ return Object.keys(this.topics).map(k=>({slug:k, ...this.topics[k]})); }
+};
 
 /* ================================================================ *
  *  DASHBOARD
@@ -2289,7 +2454,8 @@ Fleet.editDrone=function(id){
       <div class="hint">Drives change-event classification when the drone is added or edited.</div></div>
     <div class="field"><label class="req">Serial number</label><input id="dSerial" value="${U.esc(d?.serial||'')}"><div class="hint">Appears in ReOC Schedule 1. Changing it triggers a CASA notification.</div></div>
     <div class="inline"><div class="field"><label>Reg. status</label><input id="dRegStatus" value="${U.esc(d?.regStatus||'Registered')}"></div>
-      <div class="field"><label>Reg. expiry</label><input type="date" id="dRegExp" value="${U.esc(d?.regExpiry||'')}"></div></div>
+      <div class="field"><label>Reg. expiry</label><input type="date" id="dRegExp" value="${U.esc(d?.regExpiry||'')}">
+        <div class="hint">Set to the current expiry from myCASA. <a href="#" onclick="event.preventDefault();Guides.show('drone-registration')">How registration works ⓘ</a></div></div></div>
     <div class="inline"><div class="field"><label>MTOW (kg)</label><input type="number" step="0.01" id="dMtow" value="${d?.mtowKg??''}"></div>
       <div class="field"><label>Wind limit (m/s)</label><input type="number" step="0.1" id="dWind" value="${d?.windLimit??''}"></div>
       <div class="field"><label>Total airframe hours</label><input type="number" step="0.1" id="dHours" value="${d?.totalHours??0}"></div></div>
@@ -2742,6 +2908,10 @@ Views.settings=function(){
         <li><a href="https://www.atsb.gov.au/mandatory/aviation" target="_blank" rel="noopener">ATSB — report an occurrence</a></li>
         <li>OpenSky · ok2fly (airspace apps — used on device)</li>
       </ul>
+    </div>
+    <div class="card"><div class="section-title">Help &amp; guides</div>
+      <p class="muted" style="font-size:.82rem;margin-bottom:10px">Plain-English guides on the CASA rules behind each compliance gate. They also appear as a <b>ⓘ Guide</b> button on the matching alert.</p>
+      <div class="grid cols-2">${Guides.list().map(g=>`<div class="guidecard" onclick="Guides.show('${g.slug}')"><span class="gi">${g.icon||'ⓘ'}</span><div><b>${U.esc(g.title)}</b></div></div>`).join('')}</div>
     </div>
     <div class="card"><div class="section-title">Alert history</div>${alertHistoryHtml()}</div>
     <div class="card"><div class="section-title">Audit log</div>
