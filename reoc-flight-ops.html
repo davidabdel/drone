@@ -1583,7 +1583,7 @@ function approvedStage(f){
     <div class="section-title">Open flight file — ready to fly</div>
     <div class="grid cols-2">
       <div class="kv"><span class="k">Location</span><span class="v">${U.esc(f.locationName)}</span></div>
-      <div class="kv"><span class="k">Coordinates</span><span class="v mono">${f.coordinates.lat.toFixed(5)}, ${f.coordinates.lon.toFixed(5)}</span></div>
+      <div class="kv"><span class="k">Coordinates</span><span class="v mono">${(f.coordinates&&f.coordinates.lat!=null)?f.coordinates.lat.toFixed(5)+', '+f.coordinates.lon.toFixed(5):'Not recorded (historical)'}</span></div>
       <div class="kv"><span class="k">Job #</span><span class="v">${U.esc(f.jobNumber)}</span></div>
       <div class="kv"><span class="k">Planned date</span><span class="v">${U.fmtDate(f.plannedDate)}</span></div>
       <div class="kv"><span class="k">Aircraft</span><span class="v">${d?U.esc(d.nickname+' · '+d.serial):'—'}</span></div>
@@ -2067,7 +2067,7 @@ function flightSummaryReadonly(f){
     <div class="grid cols-2">
       <div class="kv"><span class="k">Date</span><span class="v">${U.fmtDate(f.plannedDate)}</span></div>
       <div class="kv"><span class="k">Location</span><span class="v">${U.esc(f.locationName)}</span></div>
-      <div class="kv"><span class="k">Coordinates</span><span class="v mono">${f.coordinates.lat.toFixed(5)}, ${f.coordinates.lon.toFixed(5)}</span></div>
+      <div class="kv"><span class="k">Coordinates</span><span class="v mono">${(f.coordinates&&f.coordinates.lat!=null)?f.coordinates.lat.toFixed(5)+', '+f.coordinates.lon.toFixed(5):'Not recorded (historical)'}</span></div>
       <div class="kv"><span class="k">Job #</span><span class="v">${U.esc(f.jobNumber)}</span></div>
       <div class="kv"><span class="k">Aircraft</span><span class="v">${d?U.esc(d.model+' · '+d.serial):'—'}</span></div>
       <div class="kv"><span class="k">Pilot in command</span><span class="v">${p?U.esc(p.name):'—'}</span></div>
@@ -2102,7 +2102,7 @@ function printFlight(id){
     </div>
     <div class="print-sec"><h3>Summary</h3>
       <table><tr><td><b>Date</b></td><td>${U.fmtDate(f.plannedDate)}</td><td><b>Job #</b></td><td>${U.esc(f.jobNumber)}</td></tr>
-      <tr><td><b>Location</b></td><td>${U.esc(f.locationName)}</td><td><b>Coordinates</b></td><td>${f.coordinates.lat.toFixed(5)}, ${f.coordinates.lon.toFixed(5)}</td></tr>
+      <tr><td><b>Location</b></td><td>${U.esc(f.locationName)}</td><td><b>Coordinates</b></td><td>${(f.coordinates&&f.coordinates.lat!=null)?f.coordinates.lat.toFixed(5)+', '+f.coordinates.lon.toFixed(5):'Not recorded (historical)'}</td></tr>
       <tr><td><b>Aircraft</b></td><td>${d?U.esc(d.make+' '+d.model):'—'}</td><td><b>Serial</b></td><td>${d?U.esc(d.serial):'—'}</td></tr>
       <tr><td><b>Pilot in command</b></td><td>${p?U.esc(p.name):'—'}</td><td><b>Total flight time</b></td><td>${totalMin} min · ${f.sorties.length} sortie(s)</td></tr></table>
       <table><tr><th>Crew</th><th>Role</th></tr>${(f.crew||[]).map(c=>{const cp=State.person(c.personId);return `<tr><td>${cp?U.esc(cp.name):'—'}</td><td>${U.esc(c.role||'')}</td></tr>`;}).join('')}</table>
