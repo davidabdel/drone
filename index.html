@@ -1225,7 +1225,28 @@ Flights.renderArchive = function(){
 };
 
 /* ---- Create flight (DRAFT) ---- */
+function gmapEmbed(lat,lon){
+  const d=0.008, bbox=`${lon-d},${lat-d},${lon+d},${lat+d}`;
+  return `<iframe title="Location map" width="100%" height="220" style="border:0;border-radius:8px" loading="lazy"
+     src="https://www.openstreetmap.org/export/embed.html?bbox=${bbox}&layer=mapnik&marker=${lat},${lon}"></iframe>
+   <div class="hint" style="margin-top:4px">Map preview (OpenStreetMap). Use “Open in Google Maps” above for the Google view, then attach a screenshot.</div>`;
+}
+// Downscale + compress an image File to a JPEG data URL (keeps records small enough to sync in-row)
+function resizeImage(file, maxDim, quality){
+  return new Promise((res,rej)=>{
+    const img=new Image(); const url=URL.createObjectURL(file);
+    img.onload=()=>{ URL.revokeObjectURL(url);
+      let {width:w,height:h}=img; if(w>maxDim||h>maxDim){ const s=maxDim/Math.max(w,h); w=Math.round(w*s); h=Math.round(h*s); }
+      const cv=document.createElement('canvas'); cv.width=w; cv.height=h;
+      cv.getContext('2d').drawImage(img,0,0,w,h);
+      res(cv.toDataURL('image/jpeg',quality));
+    };
+    img.onerror=()=>{ URL.revokeObjectURL(url); rej(new Error('bad image')); };
+    img.src=url;
+  });
+}
 Flights.new = function(){
+  window._nfShot=null;
   if(!State.keyHolder('Chief Remote Pilot') || !State.keyHolder('Maintenance Controller')){
     toast('Set a Chief Remote Pilot and Maintenance Controller in Personnel first','err'); return;
   }
@@ -1235,10 +1256,18 @@ Flights.new = function(){
     <div class="field"><label class="req">Flight coordinates</label>
       <input id="nfCoordPaste" placeholder="Paste: -33.8688, 151.2093  ·  DMS  ·  or a Google Maps URL" oninput="Flights.parsePaste()">
       <div class="inline" style="margin-top:8px">
-        <div class="field"><label>Latitude</label><input type="number" step="any" id="nfLat"></div>
-        <div class="field"><label>Longitude</label><input type="number" step="any" id="nfLon"></div>
+        <div class="field"><label>Latitude</label><input type="number" step="any" id="nfLat" onchange="Flights.updateMap()"></div>
+        <div class="field"><label>Longitude</label><input type="number" step="any" id="nfLon" onchange="Flights.updateMap()"></div>
       </div>
       <div class="hint" id="nfCoordHint">Enter a location within Australia.</div>
+      <div id="nfMapWrap" style="display:none;margin-top:10px">
+        <div id="nfMap"></div>
+        <div class="btn-row" style="margin-top:8px">
+          <label class="btn sm">📷 Add location screenshot<input type="file" id="nfShot" accept="image/*" capture="environment" style="display:none" onchange="Flights.addShot(this)"></label>
+          <span id="nfShotName" class="hint">Optional — attach a screenshot of the map/site.</span>
+        </div>
+        <img id="nfShotPrev" alt="Location screenshot" style="display:none;max-width:100%;border-radius:8px;margin-top:8px;border:1px solid var(--line)">
+      </div>
     </div>
     <div class="field"><label class="req">Location name / site description</label><input id="nfLoc"></div>
     <div class="inline">
@@ -1259,10 +1288,24 @@ Flights.new = function(){
 };
 Flights.parsePaste = function(){
   const c = U.parseCoords($('#nfCoordPaste').value);
-  const hint = $('#nfCoordHint');
-  if(c){ $('#nfLat').value=c.lat; $('#nfLon').value=c.lon;
-    hint.innerHTML = U.inAustralia(c)? `Parsed ✓ <a href="https://www.google.com/maps?q=${c.lat},${c.lon}" target="_blank" rel="noopener">Open in Google Maps</a>` : '⚠ Coordinates are outside Australia.';
-  }
+  if(c){ $('#nfLat').value=c.lat; $('#nfLon').value=c.lon; }
+  Flights.updateMap();
+};
+Flights.updateMap = function(){
+  const lat=parseFloat($('#nfLat').value), lon=parseFloat($('#nfLon').value);
+  const hint=$('#nfCoordHint'), wrap=$('#nfMapWrap');
+  if(isNaN(lat)||isNaN(lon)){ if(wrap)wrap.style.display='none'; return; }
+  const c={lat,lon};
+  if(!U.inAustralia(c)){ hint.innerHTML='⚠ Coordinates are outside Australia.'; if(wrap)wrap.style.display='none'; return; }
+  hint.innerHTML = `Parsed ✓ <a href="https://www.google.com/maps?q=${lat},${lon}" target="_blank" rel="noopener">Open in Google Maps</a>`;
+  if(wrap){ $('#nfMap').innerHTML = gmapEmbed(lat,lon); wrap.style.display='block'; }
+};
+Flights.addShot = async function(input){
+  const file=input.files&&input.files[0]; if(!file) return;
+  try{ const dataUrl=await resizeImage(file,1280,0.72); window._nfShot=dataUrl;
+    const prev=$('#nfShotPrev'); prev.src=dataUrl; prev.style.display='block';
+    $('#nfShotName').textContent='Screenshot attached ✓ (tap to replace)';
+  }catch(e){ toast('Could not read image','err'); }
 };
 Flights.checkDrone = function(){
   const d = State.drone($('#nfDrone').value); const hint=$('#nfDroneHint'); if(!d){hint.textContent='';return;}
@@ -1289,7 +1332,7 @@ Flights.create = async function(){
   App.currentActor = sig.by;
   const id = await U.seqId('FLT');
   const f = {
-    id, status:'PLANNING', coordinates:coords, locationName:loc, jobNumber:job, plannedDate:date,
+    id, status:'PLANNING', coordinates:coords, locationImage:window._nfShot||null, locationName:loc, jobNumber:job, plannedDate:date,
     droneId, pilotId, purpose,
     planning:{ openSky:{}, ok2fly:{}, aerodromes:[], ctafNone:null, notams:{}, weatherOutlook:'',
       jsa:{done:false, hazards:[], ref:''}, site:{lz:'', altLz:'', publicInterference:'', publicMitigation:'', obstacles:'', tallestObstacleM:null, mapsReviewed:false},
@@ -1593,7 +1636,8 @@ function approvedStage(f){
     </div>
     <div style="margin-top:16px"><button class="btn primary lg" onclick="Flights.startPreflight('${f.id}')">▶ Start Pre-Flight</button></div>
     <p class="hint" style="margin-top:8px">Intended for phone use on site. Starting records the time and who started it.</p>
-  </div>`;
+  </div>
+  ${locationBlock(f)}`;
 }
 Flights.startPreflight=async(id)=>{
   const f=State.flight(id);
@@ -2026,7 +2070,7 @@ Flights.submit=async(id)=>{
 
 /* ---- SUBMITTED: approve & file ---- */
 function submittedStage(f){
-  return `${flightSummaryReadonly(f)}
+  return `${flightSummaryReadonly(f)}${locationBlock(f)}
     <div class="card" style="background:var(--panel-2)"><div class="section-title">Approve &amp; File (Chief Remote Pilot or designated approver)</div>
       <p class="muted" style="font-size:.86rem">Review the read-only summary above. On approval the file becomes immutable and is archived as the definitive audit record.</p>
       ${Alerts.blockersFor('flight',f.id).length?`<div class="alert blocker"><span class="ai">🔴</span><div class="abody"><div class="atitle">Open blockers must be resolved before filing (B16).</div></div></div>`:''}
@@ -2047,7 +2091,7 @@ Flights.close=async(id)=>{
   toast('Flight '+id+' filed — read-only','ok'); CUR=f; renderFlightFile();
 };
 
-function completedStage(f){ return flightSummaryReadonly(f) + `<div class="card no-print"><div class="section-title">Amendments</div>${amendmentsHtml(f)}</div>`; }
+function completedStage(f){ return flightSummaryReadonly(f) + locationBlock(f) + `<div class="card no-print"><div class="section-title">Amendments</div>${amendmentsHtml(f)}</div>`; }
 function closedStage(f){
   const reason=f.cancelled?f.cancelled.reason:(f.abort?f.abort.reason:'');
   return `<div class="card"><div class="alert ${f.status==='CANCELLED'?'blocker':'warning'}"><span class="ai">${f.status==='CANCELLED'?'⛔':'🟠'}</span><div class="abody"><div class="atitle">Flight ${f.status}</div><div class="awhy">${U.esc(reason||'')}</div></div></div></div>`
@@ -2056,6 +2100,17 @@ function closedStage(f){
 function amendmentsHtml(f){
   if(!f.amendments||!f.amendments.length) return '<div class="muted" style="font-size:.85rem">No amendments. Use “Amend” to append dated correction notes without altering original data.</div>';
   return f.amendments.map(a=>`<div class="kv"><span class="k">${U.fmt(a.at)} · ${U.esc(a.by)}</span><span class="v" style="text-align:left;font-weight:400">${U.esc(a.text)}</span></div>`).join('');
+}
+
+/* Location card: Google Maps link + attached screenshot */
+function locationBlock(f){
+  const hasCoord = f.coordinates && f.coordinates.lat!=null;
+  if(!hasCoord && !f.locationImage) return '';
+  return `<div class="card"><div class="section-title">Location</div>
+    ${hasCoord?`<div class="kv"><span class="k">Coordinates</span><span class="v mono">${f.coordinates.lat.toFixed(5)}, ${f.coordinates.lon.toFixed(5)}</span></div>
+      <div class="btn-row no-print" style="margin:8px 0"><a class="btn sm" href="https://www.google.com/maps?q=${f.coordinates.lat},${f.coordinates.lon}" target="_blank" rel="noopener">🗺 Open in Google Maps</a></div>`:''}
+    ${f.locationImage?`<img src="${f.locationImage}" alt="Location screenshot" style="max-width:100%;border-radius:8px;border:1px solid var(--line)">`:'<div class="muted no-print" style="font-size:.82rem">No location screenshot attached.</div>'}
+  </div>`;
 }
 
 /* ---- Read-only whole-file summary (screen) ---- */
@@ -2106,6 +2161,7 @@ function printFlight(id){
       <tr><td><b>Aircraft</b></td><td>${d?U.esc(d.make+' '+d.model):'—'}</td><td><b>Serial</b></td><td>${d?U.esc(d.serial):'—'}</td></tr>
       <tr><td><b>Pilot in command</b></td><td>${p?U.esc(p.name):'—'}</td><td><b>Total flight time</b></td><td>${totalMin} min · ${f.sorties.length} sortie(s)</td></tr></table>
       <table><tr><th>Crew</th><th>Role</th></tr>${(f.crew||[]).map(c=>{const cp=State.person(c.personId);return `<tr><td>${cp?U.esc(cp.name):'—'}</td><td>${U.esc(c.role||'')}</td></tr>`;}).join('')}</table>
+      ${f.locationImage?`<div style="margin-top:6px"><b>Location screenshot:</b><br><img src="${f.locationImage}" style="max-width:100%;max-height:320px;border:1px solid #999;margin-top:4px"></div>`:''}
     </div>
     <div class="print-sec"><h3>Airspace &amp; planning</h3>
       <table><tr><th>Check</th><th>Result</th><th>Notes</th></tr>
