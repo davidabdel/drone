@@ -1206,9 +1206,51 @@ function statusPill(s){
 }
 
 /* ================================================================ *
+ *  ACCESS GATE (soft, client-side) — keeps casual visitors out.
+ *  NOT true security: the page & Supabase key are public. For real
+ *  protection use Supabase Auth. Password is stored hashed, not plain.
+ * ================================================================ */
+const AUTH_HASH = '0b68a644fd1fd32601b827d4b5b1f69848773e76de4dbe87a42ab870a9ea4710';
+function isAuthed(){ return localStorage.getItem('reoc_authed')==='1'; }
+async function sha256hex(s){
+  const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(s));
+  return Array.from(new Uint8Array(buf)).map(x=>x.toString(16).padStart(2,'0')).join('');
+}
+function showLogin(){
+  App.el('sidebar').style.display='none';
+  const tb=document.querySelector('.topbar'); if(tb) tb.style.display='none';
+  App.el('backupBanner').classList.remove('show');
+  App.set(`<div style="max-width:380px;margin:8vh auto 0">
+    <div class="card" style="text-align:center">
+      <div style="font-size:2.2rem">🔒</div>
+      <h1 style="margin:8px 0 2px">ReOC Flight Operations</h1>
+      <p class="muted" style="margin-bottom:16px">Enter the access password to continue.</p>
+      <div class="field" style="text-align:left"><label class="req">Password</label>
+        <input type="password" id="loginPw" autocomplete="current-password" onkeydown="if(event.key==='Enter')doLogin()"></div>
+      <div id="loginErr" style="color:var(--blocker);font-size:.82rem;min-height:18px;margin-bottom:6px"></div>
+      <button class="btn primary lg" onclick="doLogin()">Sign in</button>
+    </div></div>`);
+  setTimeout(()=>{ const el=App.el('loginPw'); if(el) el.focus(); }, 60);
+}
+async function doLogin(){
+  const pw = App.el('loginPw').value;
+  const err = App.el('loginErr');
+  if(!pw){ err.textContent='Enter the password.'; return; }
+  const h = await sha256hex(pw);
+  if(h===AUTH_HASH){
+    localStorage.setItem('reoc_authed','1');
+    App.el('sidebar').style.display='';
+    const tb=document.querySelector('.topbar'); if(tb) tb.style.display='';
+    init();
+  } else { err.textContent='Incorrect password.'; App.el('loginPw').value=''; App.el('loginPw').focus(); }
+}
+function logout(){ localStorage.removeItem('reoc_authed'); location.reload(); }
+
+/* ================================================================ *
  *  INIT + FIRST-LAUNCH SETUP WIZARD
  * ================================================================ */
 async function init(){
+  if(!isAuthed()){ return showLogin(); }
   await Store.open();
   await State.loadAll();
   if(!State.settings){ return setupWizard(); }
@@ -2923,6 +2965,10 @@ Views.settings=function(){
       <p style="font-size:.82rem">Cloud sync: ${Store.isRemote()?'<span class="pill ok">Connected</span>':'<span class="pill warning">Offline / not reached</span>'} · ${Store.pendingWrites()} change(s) waiting to upload.
       <button class="btn sm" style="margin-left:8px" onclick="Settings.syncNow()">Sync now</button></p>
       <p class="hint">Data syncs to your Supabase project so every device sees the same records. Devices refresh from the cloud on load.</p>
+    </div>
+    <div class="card"><div class="section-title">Access</div>
+      <p class="muted" style="font-size:.82rem;margin-bottom:10px">This device is signed in. Sign out to require the password again on this device.</p>
+      <button class="btn danger" onclick="logout()">Sign out</button>
     </div>`);
   Settings.renderAudit();
 };
