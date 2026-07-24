@@ -345,11 +345,18 @@ const Store = (function(){
   let db = null, useLS = false;
 
   /* --- Supabase cloud backend (publishable key — safe to embed) --- */
-  const SUPA = {
-    url: 'https://cgdmtkietwfyynjxoyor.supabase.co/rest/v1',
-    key: 'sb_publishable_xyVYV6K7n6OKoA6iMTl36Q_o_I-_GNS',
-    table: 'reoc_store'
-  };
+  // Config is fetched from /api/config (Vercel serverless fn reading env vars)
+  // so keys are NOT baked into this file. Falls back to local-only if absent.
+  const SUPA = { url: '', key: '', table: 'reoc_store' };
+  async function loadConfig(){
+    try{
+      const r = await fetch('/api/config', { cache:'no-store' });
+      if(!r.ok) return;
+      const c = await r.json();
+      if(c && c.url) SUPA.url = String(c.url).replace(/\/+$/,'') + '/rest/v1';
+      if(c && c.key) SUPA.key = c.key;
+    }catch(e){ /* no cloud config reachable — run local-only */ }
+  }
   let remoteOn = false;               // last known cloud reachability
   const QKEY = 'reoc_sync_queue';     // offline write-retry queue
 
@@ -430,6 +437,7 @@ const Store = (function(){
   /* --- public API (identical signatures; reads = local cache, writes = local + cloud) --- */
   async function open(){
     await openLocal();
+    await loadConfig();   // fetch Supabase URL/key from /api/config (Vercel env)
     await flushQueue();   // push anything written while offline
     await pull();         // then refresh local cache from the cloud (source of truth)
     if('addEventListener' in window) window.addEventListener('online', ()=>{ flushQueue(); });
