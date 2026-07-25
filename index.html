@@ -2730,11 +2730,12 @@ Views.personnel=function(){
     ${State.people.map(p=>{ const ds=p.lastFlightAt?U.daysBetween(p.lastFlightAt,U.nowISO()):null; const isPilot=(p.roles||[]).some(r=>/Pilot/i.test(r));
       const overridden=p.recencyOverride&&p.recencyOverride.date&&U.daysUntil(U.addDays(p.recencyOverride.date,recDays))>=0;
       const lapsed=isPilot&&(ds==null||ds>recDays)&&!overridden;
+      const needsRepl=isPilot&&!p.replNumber;
       return `<tr><td><b>${U.esc(p.name)}</b>${(p.roles||[]).some(r=>KEY_ROLES.includes(r))?' <span class="pill status">key</span>':''}${p.keyRolePendingChange?' <span class="pill warning">pending CASA</span>':''}</td>
         <td style="font-size:.8rem">${U.esc((p.roles||[]).join(', '))}</td><td>${U.esc(p.replNumber||'—')}</td><td>${(p.totalHours||0).toFixed(1)}</td>
         <td>${p.lastFlightAt?U.fmtDate(p.lastFlightAt):'—'}</td>
         <td>${!isPilot?'—':lapsed?'<span class="pill warning">Lapsed</span>':overridden?'<span class="pill info">Override</span>':'<span class="pill ok">Current</span>'}</td>
-        <td><span class="pill ${p.status==='Active'?'ok':'status'}">${U.esc(p.status)}</span></td>
+        <td>${needsRepl?'<span class="pill blocker">ATTENTION NEEDED</span>':`<span class="pill ${p.status==='Active'?'ok':'status'}">${U.esc(p.status)}</span>`}</td>
         <td class="actions">${lapsed?`<button class="rowbtn" onclick="People.recency('${p.id}')">Recency</button>`:''}<button class="rowbtn" onclick="People.edit('${p.id}')">Edit</button></td></tr>`; }).join('')}
     </tbody></table></div></div>`);
 };
