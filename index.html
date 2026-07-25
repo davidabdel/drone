@@ -1253,6 +1253,27 @@ async function doLogin(){
   } else { err.textContent='Incorrect password.'; App.el('loginPw').value=''; App.el('loginPw').focus(); }
 }
 function logout(){ localStorage.removeItem('reoc_authed'); location.reload(); }
+// Shown when this device has no local data AND the cloud is unreachable/unconfigured —
+// so we never wrongly present first-time setup for an already-configured organisation.
+function showConnError(){
+  App.el('sidebar').style.display='none';
+  const tb=document.querySelector('.topbar'); if(tb) tb.style.display='none';
+  App.el('backupBanner').classList.remove('show');
+  App.set(`<div style="max-width:440px;margin:7vh auto 0"><div class="card" style="text-align:center">
+    <div style="font-size:2.2rem">☁️⚠️</div>
+    <h1 style="margin:8px 0 2px">Can't reach your data</h1>
+    <p class="muted" style="margin-bottom:14px">This device couldn't connect to the AVS Productions cloud, so your records aren't loaded. Your data is safe in the cloud — this device just can't see it yet.</p>
+    <div style="text-align:left;font-size:.86rem;background:var(--panel-2);border:1px solid var(--line);border-radius:var(--radius-sm);padding:12px 14px;margin-bottom:14px">
+      <b>Common fixes:</b>
+      <ul style="margin:6px 0 0;padding-left:20px">
+        <li>Check your internet connection and retry.</li>
+        <li>If this is a new deployment, confirm <code>SUPABASE_URL</code> and <code>SUPABASE_ANON_KEY</code> are set in Vercel and the site has been redeployed.</li>
+      </ul>
+    </div>
+    <button class="btn primary lg" onclick="init()">Retry</button>
+    <p class="hint" style="margin-top:10px">Do not run first-time setup — this organisation is already configured.</p>
+  </div></div>`);
+}
 
 /* ================================================================ *
  *  INIT + FIRST-LAUNCH SETUP WIZARD
@@ -1261,7 +1282,14 @@ async function init(){
   if(!isAuthed()){ return showLogin(); }
   await Store.open();
   await State.loadAll();
-  if(!State.settings){ return setupWizard(); }
+  if(!State.settings){
+    // Empty local data. Only offer first-time setup if the cloud is actually
+    // reachable and genuinely empty. If the cloud can't be reached (e.g. env
+    // vars not set on this deployment), show a connection screen instead of
+    // wrongly re-running setup for an already-configured organisation.
+    if(Store.isRemote()) return setupWizard();
+    return showConnError();
+  }
   App.el('sbOrg').textContent = State.settings.orgName;
   App.el('tbOrg').textContent = State.settings.orgName;
   App.el('sbReoc').textContent = 'ReOC '+(State.settings.reocNumber||'—');
