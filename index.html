@@ -269,6 +269,26 @@ table.data td.actions{text-align:right;white-space:nowrap}
 }
 @media (min-width:821px){.topbar{display:none}}
 
+/* ---- phones: reflow data tables into stacked labelled cards ---- */
+@media (max-width:600px){
+  .tbl-wrap{overflow-x:visible}
+  table.data thead{display:none}
+  table.data, table.data tbody, table.data tr, table.data td{display:block;width:100%}
+  table.data tr{border:1px solid var(--line);border-radius:10px;margin-bottom:10px;background:var(--panel);overflow:hidden}
+  table.data tr:hover td{background:transparent}
+  table.data td{border:0;border-top:1px solid var(--line);padding:9px 13px;display:flex;justify-content:space-between;align-items:center;gap:14px;text-align:right;font-size:.9rem}
+  table.data td::before{content:attr(data-label);font-weight:600;color:var(--ink-3);text-align:left;flex:0 0 40%;font-size:.68rem;text-transform:uppercase;letter-spacing:.04em}
+  table.data td:first-child{border-top:0;background:var(--panel-2);font-weight:700;font-size:1rem;justify-content:flex-start;text-align:left}
+  table.data td:first-child::before{display:none}
+  table.data td.actions{justify-content:flex-end}
+  table.data td.actions::before{display:none}
+  table.data td:empty{display:none}
+  /* tighter page padding + smaller headings on phones */
+  #view{padding:12px 11px 90px}
+  .page-head h1{font-size:1.25rem}
+  .card{padding:13px}
+}
+
 /* ============================ PRINT ============================ */
 @media print{
   @page{size:A4 portrait;margin:14mm}
@@ -3103,7 +3123,25 @@ Flights.confirmFlightTime=async(id)=>{
 /* ================================================================ *
  *  BOOT
  * ================================================================ */
-window.addEventListener('DOMContentLoaded', ()=>{ init().catch(e=>{ console.error(e); toast('Startup error: '+e.message,'err'); }); });
+/* Mobile: copy each data-table's header labels onto its cells so the
+   stacked-card layout (see @media max-width:600px) shows field names. */
+function labelizeTables(root){
+  (root||document).querySelectorAll('table.data').forEach(t=>{
+    const heads=[...t.querySelectorAll('thead th')].map(th=>th.textContent.trim());
+    if(!heads.length) return;
+    t.querySelectorAll('tbody tr').forEach(tr=>{
+      [...tr.children].forEach((td,i)=>{ if(heads[i]!=null && td.getAttribute('data-label')!==heads[i]) td.setAttribute('data-label', heads[i]); });
+    });
+  });
+}
+function initResponsiveTables(){
+  const view=App.el('view'); if(!view) return;
+  labelizeTables(view);
+  // re-label whenever a view re-renders (childList only — setting attributes won't re-trigger)
+  new MutationObserver(()=>labelizeTables(view)).observe(view,{childList:true,subtree:true});
+}
+
+window.addEventListener('DOMContentLoaded', ()=>{ initResponsiveTables(); init().catch(e=>{ console.error(e); toast('Startup error: '+e.message,'err'); }); });
 </script>
 </body>
 </html>
