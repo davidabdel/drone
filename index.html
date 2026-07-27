@@ -1429,10 +1429,10 @@ Views.dashboard = function(){
         </div>
 
         <div class="aq-panel">
-          <div class="aq-panel-head"><div class="lbl">OPEN FLIGHT FILES</div><a href="#" onclick="event.preventDefault();nav('flights')">All flights</a></div>
+          <div class="aq-panel-head"><div class="lbl">PLANNED FLIGHT FILES</div><a href="#" onclick="event.preventDefault();nav('flights')">All flights</a></div>
           ${openFlights.length? openFlights.slice(0,5).map(f=>`<div class="aq-flight-row" onclick="openFlight('${f.id}')">
               <span class="loc">${U.esc(f.locationName)}</span>${statusPill(f.status)}</div>`).join('')
-            : `<div class="aq-empty-dash"><p>No open flight files</p><button class="btn aq-primary" style="margin-top:10px" onclick="Flights.new()">Start a flight file</button></div>`}
+            : `<div class="aq-empty-dash"><p>No planned flights</p><button class="btn aq-primary" style="margin-top:10px" onclick="Flights.new()">Start a flight file</button></div>`}
         </div>
 
         <div class="aq-clear">
