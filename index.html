@@ -3342,9 +3342,32 @@ function alertHistoryHtml(){
   const resolved=State.alerts.filter(a=>a.resolvedAt).sort((a,b)=>new Date(b.resolvedAt)-new Date(a.resolvedAt)).slice(0,40);
   if(!resolved.length) return '<div class="muted" style="font-size:.85rem">No resolved alerts yet.</div>';
   return `<div class="tbl-wrap"><table class="data"><thead><tr><th>Severity</th><th>Alert</th><th>Resolved</th><th>Resolution</th></tr></thead><tbody>
-    ${resolved.map(a=>`<tr><td>${a.severity==='blocker'?'🔴':a.severity==='warning'?'🟠':'🔵'}</td><td>${U.esc(a.message)}</td><td>${U.fmt(a.resolvedAt)}</td><td>${U.esc((a.resolvedBy?a.resolvedBy+' — ':'')+(a.resolutionNote||''))}</td></tr>`).join('')}</tbody></table></div>`;
+    ${resolved.map(a=>`<tr style="cursor:pointer" onclick="Settings.showAlertDetail('${a.id}')"><td>${a.severity==='blocker'?'🔴':a.severity==='warning'?'🟠':'🔵'}</td><td>${U.esc(a.message)}</td><td>${U.fmt(a.resolvedAt)}</td><td>${U.esc((a.resolvedBy?a.resolvedBy+' — ':'')+(a.resolutionNote||''))}</td></tr>`).join('')}</tbody></table></div>`;
 }
 const Settings={};
+Settings.showAlertDetail=function(id){
+  const a = State.alerts.find(x=>x.id===id); if(!a){ toast('Alert not found','err'); return; }
+  const origin = issueOrigin(a);
+  const link = alertLink(a);
+  const entityLabel = {flight:'Flight',drone:'Aircraft',battery:'Battery',person:'Person',changeEvent:'Change event'}[a.entityType] || a.entityType || '—';
+  const body = `
+    <div class="kv"><span class="k">Severity</span><span class="v">${a.severity==='blocker'?'🔴 Blocker':a.severity==='warning'?'🟠 Warning':'🔵 Info'}</span></div>
+    <div class="kv"><span class="k">Alert</span><span class="v" style="text-align:left;font-weight:400">${U.esc(a.message)}</span></div>
+    ${a.why?`<div class="kv"><span class="k">Why</span><span class="v" style="text-align:left;font-weight:400">${U.esc(a.why)}</span></div>`:''}
+    ${a.fix?`<div class="kv"><span class="k">Fix</span><span class="v" style="text-align:left;font-weight:400">${U.esc(a.fix)}</span></div>`:''}
+    <div class="kv"><span class="k">Relates to</span><span class="v">${U.esc(entityLabel)}${link?` — <a href="#" onclick="event.preventDefault();Modal.closeAll();${link}">Open</a>`:''}</span></div>
+    <div class="kv"><span class="k">First raised</span><span class="v">${U.fmt(a.createdAt)}</span></div>
+    ${origin?`<div class="kv"><span class="k">Defect origin</span><span class="v" style="text-align:left;font-weight:400">${origin}</span></div>`:''}
+    <div class="divider"></div>
+    <div class="kv"><span class="k">Status</span><span class="v">${a.resolvedAt?'Resolved':'Open'}</span></div>
+    ${a.resolvedAt?`<div class="kv"><span class="k">Resolved</span><span class="v">${U.fmt(a.resolvedAt)}</span></div>
+      <div class="kv"><span class="k">Resolved by</span><span class="v">${U.esc(a.resolvedBy||'—')}</span></div>
+      <div class="kv"><span class="k">Resolution</span><span class="v" style="text-align:left;font-weight:400">${U.esc(a.resolutionNote||'—')}</span></div>`:''}
+    ${a.dismissedInfo?`<div class="kv"><span class="k">Dismissed by</span><span class="v">${U.esc(a.dismissedInfo.by)} · ${U.fmt(a.dismissedInfo.at)}</span></div>
+      <div class="kv"><span class="k">Reason</span><span class="v" style="text-align:left;font-weight:400">${U.esc(a.dismissedInfo.reason||'—')}</span></div>`:''}
+  `;
+  Modal.open({title:'Alert detail', body, footer:`<button class="btn primary" onclick="Modal.closeAll()">Close</button>`});
+};
 Settings.renderAudit=function(){
   const q=($('#auditQ')?.value||'').toLowerCase();
   let rows=[...State.auditLog].sort((a,b)=>new Date(b.at)-new Date(a.at));
