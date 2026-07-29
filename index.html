@@ -1318,10 +1318,20 @@ function alertPrimaryAction(a){
   const link = alertLink(a);
   return link? {label:'Open', onclick:link} : null;
 }
+// For a defect-raised alert, look up the underlying MaintIssue so the card
+// can show who reported it and when — not just the compliance blocker text.
+function issueOrigin(a){
+  const rk = a.ruleKey||'';
+  if(!rk.startsWith('issue:')) return null;
+  const iss = State.maintIssues.find(x=>x.id===rk.slice(rk.indexOf(':')+1));
+  return iss? `Raised by ${U.esc(iss.raisedBy)} · ${U.fmt(iss.raisedAt)}` : null;
+}
 function aqCard(a){
   const code = alertCode(a);
   const tag = code? `<span class="aq-tag">OPS MANUAL ${code}</span>` : '';
   const fix = a.fix? `<span class="aq-fix">${U.esc(a.fix)}</span>` : '';
+  const origin = issueOrigin(a);
+  const originLine = origin? `<div class="aq-fix" style="flex-basis:100%;margin-top:2px">${origin}</div>` : '';
   const topic = a.helpTopic || guessTopic(a);
   const guideBtn = topic? `<button class="btn aq-ghost" onclick="Guides.show('${topic}')">Guide</button>` : '';
   if(a.severity==='blocker'){
@@ -1329,13 +1339,13 @@ function aqCard(a){
     return `<div class="aq-card blocker">
       <div><div class="aq-title">${U.esc(a.message)}</div>
         ${a.why?`<div class="aq-desc">${U.esc(a.why)}</div>`:''}
-        <div class="aq-meta">${tag}${fix}</div></div>
+        <div class="aq-meta">${tag}${fix}${originLine}</div></div>
       <div class="aq-actions">${guideBtn}${act?`<button class="btn aq-danger" onclick="${act.onclick}">${U.esc(act.label)}</button>`:''}</div>
     </div>`;
   }
   return `<div class="aq-card warning">
     <div><div class="aq-title sm">${U.esc(a.message)}</div>
-      <div class="aq-meta">${tag}${fix}</div></div>
+      <div class="aq-meta">${tag}${fix}${originLine}</div></div>
     <div class="aq-actions">
       <button class="btn aq-text" onclick="dismissAlertPrompt('${a.id}')">Dismiss</button>
       <button class="btn aq-ghost" onclick="Dashboard.ackAlert('${a.id}')">Acknowledge</button>
@@ -1890,7 +1900,67 @@ function renderFlightFile(){
     <div class="card no-print"><div class="stepper">${stepper}</div></div>
     ${flightAlertStrip(f)}
     ${stageHtml}
+    ${flightLogHtml(f)}
   `);
+}
+/* On-screen pre-flight / post-flight log — same data as the print export,
+   but readable in-app without printing. Shows once each phase is done. */
+function flightLogHtml(f){
+  if(!f.preOp.done && !f.postFlight.done) return '';
+  const it=n=>f.preOp.items[n]||{}; const pit=n=>f.postOp.items[n]||{};
+  const w=f.preOp.weather||{};
+  const row=(on,label,val,at,note)=>`<div class="kv"><span class="k">${on?'✓':'—'} ${U.esc(label)}</span>
+    <span class="v" style="font-weight:400;text-align:right">${val?U.esc(val):''}${at?` <span class="hint mono">${U.fmt(at)}</span>`:''}${note?`<div class="hint">${U.esc(note)}</div>`:''}</span></div>`;
+  const defectsFor=(sortieCtx)=>State.maintIssues.filter(i=>i.flightId===f.id).map(i=>
+    `<div class="alert ${i.severity==='Grounding'?'blocker':'warning'}" style="margin-top:8px"><span class="ai">${i.severity==='Grounding'?'🔴':'🟠'}</span>
+      <div class="abody"><div class="atitle">${U.esc(i.id)}: ${U.esc(i.description)}</div>
+      <div class="awhy">Raised by ${U.esc(i.raisedBy)} · ${U.fmt(i.raisedAt)} · ${U.esc(i.status)}${i.rectification?` · rectified by ${U.esc(i.rectification.by)} · ${U.fmt(i.rectification.date)}`:''}</div></div></div>`).join('');
+
+  let preHtml='';
+  if(f.preOp.done){
+    preHtml = `<details class="card no-print" open><summary class="section-title" style="cursor:pointer">Pre-flight log ▾</summary>
+      <div class="section-title" style="margin-top:10px">Pre-operation checklist</div>
+      ${row(it(1).ticked,'1. Job number confirmed',f.jobNumber,it(1).at)}
+      ${row(it(2).ticked,'2. JSA read & understood',null,it(2).at)}
+      ${row((f.crew||[]).length>=2,'3. Crew roles assigned',(f.crew||[]).length+' crew')}
+      ${row(it(4).ticked,'4. Weather within limits',`wind ${w.windKt??'—'}kt, gust ${w.gustKt??'—'}kt, ${w.precip||'—'}, ${w.temp??'—'}°C`,it(4).at)}
+      ${row(it(5).ticked,'5. Crew huddle / briefing',null,it(5).at)}
+      ${row(it(6).ticked,'6. Alternate LZ confirmed on site',null,it(6).at)}
+      ${row(it(7).value&&it(7).value!=='High','7. Public interference re-assessed',it(7).value,null,it(7).note)}
+      ${row(it(8).ticked,'8. Aeronautical maps reviewed',null,it(8).at)}
+      ${row(it(9).ticked,'9. Obstacles confirmed',(f.preOp.tallestConfirm??f.planning.site.tallestObstacleM)+' m',it(9).at)}
+      ${row(batteriesOk(f),'10. Batteries >90%',(f.preOp.batteries||[]).map(b=>{const bb=State.battery(b.batteryId);return (bb?bb.label:b.batteryId)+' '+b.pct+'%';}).join(', '))}
+      ${row(it(11).ticked,'11. Media storage OK',null,it(11).at)}
+      ${row(it(12).ticked,'12. Camera settings configured',null,it(12).at,it(12).note)}
+      ${it(13).note?row(true,'13. Field notes',null,null,it(13).note):''}
+      ${row(true,'14. Completed by',f.preOp.sig?f.preOp.sig.by+' ('+f.preOp.sig.initials+')':'—',f.preOp.sig&&f.preOp.sig.at)}
+      ${f.sorties.map(sr=>`<div class="section-title" style="margin-top:14px">Sortie ${sr.n} — pre-flight procedure</div>
+        ${PREFLIGHT_STEPS.map(st=>row(sr.preFlightSteps[st.n]&&sr.preFlightSteps[st.n].ticked, st.n+'. '+st.label, null, sr.preFlightSteps[st.n]&&sr.preFlightSteps[st.n].at)).join('')}
+        <div class="kv"><span class="k">Battery / takeoff</span><span class="v" style="font-weight:400;text-align:right">${(sr.batteryIds||[]).map(b=>{const bb=State.battery(b);return bb?bb.label:b;}).join(', ')||'—'} · ${U.fmt(sr.takeoffAt)}${sr.aborted?` · <b style="color:var(--blocker)">ABORTED: ${U.esc(sr.aborted.reason)}</b>`:''}</span></div>`).join('')}
+    </details>`;
+  }
+  let postHtml='';
+  if(f.postFlight.done){
+    const totalMin=f.postFlight.totalMin||f.sorties.reduce((a,x)=>a+(x.durationMin||0),0);
+    postHtml = `<details class="card no-print" open><summary class="section-title" style="cursor:pointer">Post-flight log ▾</summary>
+      <div class="section-title" style="margin-top:10px">Post-flight procedure</div>
+      ${POSTFLIGHT_STEPS.map(st=>row(f.postFlight.steps[st.n]&&f.postFlight.steps[st.n].ticked, st.n+'. '+st.label, null, f.postFlight.steps[st.n]&&f.postFlight.steps[st.n].at)).join('')}
+      ${defectsFor()}
+      <div class="section-title" style="margin-top:14px">Post-operation checklist</div>
+      ${row(pit(1).ticked,'1. Drone flown confirmed',State.drone(f.droneId)?State.drone(f.droneId).model:'')}
+      ${row(!f.sorties.some(x=>x.takeoffAt&&!x.landedAt),'2. All sorties logged')}
+      ${row(pit(3).ticked,'3. Spotters confirmed')}
+      ${row(true,'4. Total flight hours',(totalMin/60).toFixed(2)+' h')}
+      ${row(batPostOk(f),'5. Battery post-flight state recorded')}
+      ${row(pit(6).ticked,'6. Media offloaded & backed up')}
+      ${row(!!pit(7).value,'7. Maintenance issues arising',pit(7).value)}
+      ${row(!!pit(8).value,'8. Incidents / occurrences',pit(8).value)}
+      ${pit(9).note?row(true,'9. Notes / lessons',null,null,pit(9).note):''}
+      ${row(true,'10. Completed by',f.submission?f.submission.by+' ('+f.submission.initials+')':'—',f.submission&&f.submission.at)}
+      ${f.postOp.occurrence?`<div class="alert blocker" style="margin-top:8px"><span class="ai">🔴</span><div class="abody"><div class="atitle">Occurrence: ${U.esc(f.postOp.occurrence.severity||'')}</div><div class="awhy">${U.esc(f.postOp.occurrence.details||'')}${f.postOp.occurrence.atsb?` · ATSB ref ${U.esc(f.postOp.occurrence.atsb.ref||'')}, notified ${U.esc(f.postOp.occurrence.atsb.notifiedAtLocal||'')} by ${U.esc(f.postOp.occurrence.atsb.by||'')}`:''}</div></div></div>`:''}
+    </details>`;
+  }
+  return preHtml+postHtml;
 }
 function flightAlertStrip(f){
   const al = Alerts.openFor('flight',f.id);
@@ -2892,9 +2962,9 @@ Fleet.saveBattery=async function(id){
 Fleet.maintHtml=function(){
   const issues=State.maintIssues.filter(i=>i.status==='Open');
   return `<div class="card"><div class="section-title">Open defects / maintenance issues</div>
-    ${issues.length?`<div class="tbl-wrap"><table class="data"><thead><tr><th>ID</th><th>Aircraft</th><th>Description</th><th>Severity</th><th>Raised</th><th></th></tr></thead><tbody>
+    ${issues.length?`<div class="tbl-wrap"><table class="data"><thead><tr><th>ID</th><th>Aircraft</th><th>Description</th><th>Severity</th><th>Raised by</th><th>Date raised</th><th></th></tr></thead><tbody>
       ${issues.map(i=>{const d=State.drone(i.droneId);return `<tr><td class="mono">${i.id}</td><td>${d?U.esc(d.nickname):'—'}</td><td>${U.esc(i.description)}</td>
-        <td><span class="pill ${i.severity==='Grounding'?'blocker':'warning'}">${i.severity}</span></td><td>${U.fmtDate(i.raisedAt)}</td>
+        <td><span class="pill ${i.severity==='Grounding'?'blocker':'warning'}">${i.severity}</span></td><td>${U.esc(i.raisedBy)}</td><td>${U.fmt(i.raisedAt)}</td>
         <td class="actions"><button class="rowbtn" onclick="Fleet.rectify('${i.id}')">Rectify</button></td></tr>`;}).join('')}</tbody></table></div>`
       :'<div class="muted" style="font-size:.85rem">No open defects.</div>'}
     <div class="btn-row" style="margin-top:10px"><button class="btn sm" onclick="Fleet.newIssue()">＋ Log a defect manually</button></div>
@@ -2984,7 +3054,7 @@ Fleet.techlogFor=function(droneId){
   const events=[];
   State.flights.filter(f=>f.droneId===droneId&&f.postFlight.done).forEach(f=>events.push({at:f.closure?.at||f.postFlight.steps[9]?.at, type:'Flight', txt:`${f.id} — ${(f.postFlight.totalMin||0)} min at ${f.locationName}`}));
   State.maintRecords.filter(r=>r.droneId===droneId).forEach(r=>events.push({at:r.date,type:'Maintenance',txt:`${r.id} — ${r.workPerformed}`}));
-  State.maintIssues.filter(i=>i.droneId===droneId).forEach(i=>events.push({at:i.raisedAt,type:'Defect',txt:`${i.id} — ${i.description} (${i.severity}/${i.status})`}));
+  State.maintIssues.filter(i=>i.droneId===droneId).forEach(i=>events.push({at:i.raisedAt,type:'Defect',txt:`${i.id} — ${i.description} (${i.severity}/${i.status}) · raised by ${i.raisedBy}`}));
   events.sort((a,b)=>new Date(b.at)-new Date(a.at));
   return `<div class="card"><div class="btn-row" style="justify-content:space-between"><div class="section-title">Technical log — ${U.esc(d.nickname)}</div><button class="btn sm" onclick="Fleet.printTechLog('${droneId}')">🖨 Print Technical Log</button></div>
     <div class="tbl-wrap"><table class="data"><thead><tr><th>Date</th><th>Type</th><th>Detail</th></tr></thead><tbody>
@@ -2996,7 +3066,7 @@ Fleet.printTechLog=function(droneId){
   const events=[];
   State.flights.filter(f=>f.droneId===droneId&&f.postFlight.done).forEach(f=>events.push({at:f.closure?.at||f.postFlight.steps[9]?.at,type:'Flight',txt:`${f.id} — ${(f.postFlight.totalMin||0)} min at ${f.locationName}`}));
   State.maintRecords.filter(r=>r.droneId===droneId).forEach(r=>events.push({at:r.date,type:'Maintenance',txt:`${r.id} — ${r.workPerformed}${r.parts?' · parts: '+r.parts:''} · ${r.performedBy}`}));
-  State.maintIssues.filter(i=>i.droneId===droneId).forEach(i=>events.push({at:i.raisedAt,type:'Defect',txt:`${i.id} — ${i.description} (${i.severity}/${i.status})`}));
+  State.maintIssues.filter(i=>i.droneId===droneId).forEach(i=>events.push({at:i.raisedAt,type:'Defect',txt:`${i.id} — ${i.description} (${i.severity}/${i.status}) · raised by ${i.raisedBy}`}));
   events.sort((a,b)=>new Date(b.at)-new Date(a.at));
   App.el('printRoot').innerHTML=`<div class="print-doc"><div class="print-head"><div class="org">${U.esc(s.orgName)}</div><div class="meta">ReOC ${U.esc(s.reocNumber||'—')} · Technical Log · ${U.esc(d.nickname)} (${U.esc(d.make+' '+d.model)}, s/n ${U.esc(d.serial)}) · ${(d.totalHours||0).toFixed(1)} airframe hours</div></div>
     <div class="print-sec"><table><tr><th>Date</th><th>Type</th><th>Detail</th></tr>${events.map(e=>`<tr><td>${U.fmt(e.at)}</td><td>${e.type}</td><td>${U.esc(e.txt)}</td></tr>`).join('')}</table></div>
