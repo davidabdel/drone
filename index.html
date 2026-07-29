@@ -513,9 +513,9 @@ table.data td.actions{text-align:right;white-space:nowrap}
  * ---------------------------------------------------------------- */
 const Store = (function(){
   const DB_NAME = 'reoc_flight_ops';
-  const DB_VER = 1;
+  const DB_VER = 2; // bumped to add opsManualEntries — existing IndexedDBs get the new store via onupgradeneeded
   const STORES = ['settings','people','drones','batteries','maintSchedules',
-                  'maintRecords','maintIssues','flights','changeEvents','alerts','auditLog','counters'];
+                  'maintRecords','maintIssues','flights','changeEvents','alerts','auditLog','counters','opsManualEntries'];
   let db = null, useLS = false;
 
   /* --- Supabase cloud backend (publishable key — safe to embed) --- */
@@ -700,7 +700,7 @@ const U = (function(){
  * ---------------------------------------------------------------- */
 const State = {
   settings:null, people:[], drones:[], batteries:[], maintSchedules:[],
-  maintRecords:[], maintIssues:[], flights:[], changeEvents:[], alerts:[], auditLog:[],
+  maintRecords:[], maintIssues:[], flights:[], changeEvents:[], alerts:[], auditLog:[], opsManualEntries:[],
   async loadAll(){
     this.settings   = await Store.get('settings','app') || null;
     this.people     = await Store.all('people');
@@ -713,6 +713,7 @@ const State = {
     this.changeEvents = await Store.all('changeEvents');
     this.alerts     = await Store.all('alerts');
     this.auditLog   = await Store.all('auditLog');
+    this.opsManualEntries = await Store.all('opsManualEntries');
   },
   // convenience getters
   drone(id){ return this.drones.find(d=>d.id===id); },
@@ -739,6 +740,22 @@ async function audit(action, entityType, entityId, detail){
   const row = { id:U.uid(), at:U.nowISO(), who:(App.currentActor||'System'), action, entityType, entityId, detail:detail||'' };
   await Store.put('auditLog', row);
   State.auditLog.push(row);
+}
+
+/* ---------------------------------------------------------------- *
+ *  3b. OPERATIONS MANUAL — curated amendment record.
+ *  Distinct from the audit log (which captures every UI action): this is
+ *  only the compliance-meaningful entries a real RPAS Ops Manual keeps —
+ *  Schedule 1 changes, maintenance/airworthiness, personnel, procedures,
+ *  occurrences — auto-logged at the point each real action happens.
+ * ---------------------------------------------------------------- */
+const OPS_MANUAL_CATEGORIES = ['Schedule 1 — Aircraft','Maintenance & Airworthiness','Personnel','Procedures','Incidents & Occurrences'];
+async function logOpsManualEntry(category, title, description, reference){
+  const row = { id:await U.seqId('OM'), date:U.nowISO(), category, title, description:description||'',
+    reference:reference||null, recordedBy:App.currentActor||'System', createdAt:U.nowISO(), updatedAt:U.nowISO() };
+  await Store.put('opsManualEntries', row);
+  State.opsManualEntries.push(row);
+  return row;
 }
 
 /* ---------------------------------------------------------------- *
@@ -821,6 +838,7 @@ async function createChangeEvent({classification, triggerType, triggerRef, descr
   };
   await saveEntity('changeEvents','changeEvents',ev);
   await audit('create','changeEvent',id, classification+': '+description);
+  await logOpsManualEntry('Procedures', (classification==='SIG'?'Significant':'Non-significant')+' change identified — '+id, description, id);
   // seed alert
   if(classification==='SIG'){
     await Alerts.raise({ severity:'blocker', message:'Do not implement: '+description+' awaits CASA approval',
@@ -912,6 +930,7 @@ const NAV = [
   {id:'fleet', label:'Fleet', ico:'⛊'},
   {id:'personnel', label:'Personnel', ico:'☺'},
   {id:'changes', label:'Change events', ico:'⇄'},
+  {id:'opsmanual', label:'Ops Manual', ico:'📘'},
   {id:'settings', label:'Settings', ico:'⚙'}
 ];
 // Per-nav-item badge count: Dashboard shows the urgent (blocker) count in red;
@@ -977,7 +996,7 @@ function nav(route, arg){
   window.scrollTo(0,0);
   const map = {
     dashboard:Views.dashboard, flights:Views.flights, fleet:Views.fleet,
-    personnel:Views.personnel, changes:Views.changes, settings:Views.settings
+    personnel:Views.personnel, changes:Views.changes, opsmanual:Views.opsManual, settings:Views.settings
   };
   (map[route]||Views.dashboard)(arg);
 }
@@ -2678,7 +2697,14 @@ Flights.setOccSeverity=async(v)=>{ CUR.postOp.occurrence=CUR.postOp.occurrence||
   await saveFlight(CUR); await recompute(); renderFlightFile(); };
 Flights.setOccDetails=async(v)=>{ CUR.postOp.occurrence=CUR.postOp.occurrence||{}; CUR.postOp.occurrence.details=v; await saveFlight(CUR); };
 Flights.setAtsb=async(k,v)=>{ CUR.postOp.occurrence.atsb=CUR.postOp.occurrence.atsb||{}; CUR.postOp.occurrence.atsb[k]=v;
-  const a=CUR.postOp.occurrence.atsb; if(a.notifiedAtLocal&&a.ref&&a.by){ await Alerts.resolve('atsb:'+CUR.id); }
+  const a=CUR.postOp.occurrence.atsb;
+  if(a.notifiedAtLocal&&a.ref&&a.by){
+    await Alerts.resolve('atsb:'+CUR.id);
+    if(!CUR.postOp.occurrence._opsManualLogged){
+      CUR.postOp.occurrence._opsManualLogged=true;
+      await logOpsManualEntry('Incidents & Occurrences', 'ATSB-reportable occurrence — '+CUR.id, (CUR.postOp.occurrence.details||'')+' · ATSB ref '+a.ref+' · Notified by '+a.by+' at '+a.notifiedAtLocal, CUR.id);
+    }
+  }
   await saveFlight(CUR); await recompute(); renderFlightFile(); };
 Flights.submit=async(id)=>{
   const f=State.flight(id); const {ok,missing}=evalPostOp(f);
@@ -2928,6 +2954,7 @@ Fleet.saveDrone=async function(id){
       createdAt:U.nowISO(), updatedAt:U.nowISO(), createdBy:App.currentActor };
     await saveEntity('drones','drones',drone);
     await createDefaultSchedules(drone);
+    await logOpsManualEntry('Schedule 1 — Aircraft', 'Aircraft added — '+nick, `${make} ${model}, serial ${serial}, type category: ${type}`, drone.id);
     // change-event interceptor (5.2)
     if(isOther){
       await createChangeEvent({classification:'SIG',triggerType:'new-rpa-type',triggerRef:drone.id,description:`New RPA type requires CASA approval before operation: ${nick} (${make} ${model})`});
@@ -2943,6 +2970,7 @@ Fleet.saveDrone=async function(id){
       totalHours:parseFloat($('#dHours').value)||0,status:$('#dStatus').value});
     await saveEntity('drones','drones',drone);
     if(serial!==oldSerial){
+      await logOpsManualEntry('Schedule 1 — Aircraft', 'Serial number changed — '+nick, `${oldSerial} → ${serial}`, drone.id);
       await createChangeEvent({classification:'NONSIG',triggerType:'serial-change',triggerRef:drone.id,description:`Serial number changed for ${nick} (${oldSerial} → ${serial}) — notify CASA within 21 days`});
       toast('Serial changed — CASA notification created','ok');
     } else toast('Drone updated','ok');
@@ -2958,6 +2986,7 @@ Fleet.retireDrone=async function(id){
   if(!reason) return;
   d.status='Retired-Sold-Written off'; d.removedAt=U.nowISO(); d.removalReason=reason;
   await saveEntity('drones','drones',d);
+  await logOpsManualEntry('Schedule 1 — Aircraft', 'Aircraft retired/sold/written off — '+d.nickname, reason, id);
   if(sameType.length===0){
     const removeType=await confirmDialog({title:'Last aircraft of this type',message:`This was the last aircraft of type “${d.typeCategory}”. Is this type being removed from the ReOC? (Removing an RPA type requires CASA approval first.)`,confirmLabel:'Yes — remove the type (significant)'});
     if(removeType){ await createChangeEvent({classification:'SIG',triggerType:'remove-rpa-type',triggerRef:id,description:`Removal of RPA type “${d.typeCategory}” from the ReOC requires CASA approval`}); }
@@ -2998,9 +3027,13 @@ Fleet.saveBattery=async function(id){
   if(!id){ const b={ id:U.uid(), label, droneCompat:compat, purchaseDate:$('#bPurch').value||null, cycles:parseInt($('#bCycles').value)||0,
     cycleLimit:parseInt($('#bLimit').value)||200, status:'In service', conditionNotes:[], createdAt:U.nowISO(), updatedAt:U.nowISO(), createdBy:App.currentActor };
     await saveEntity('batteries','batteries',b); }
-  else { const b=State.battery(id); Object.assign(b,{label,droneCompat:compat,purchaseDate:$('#bPurch').value||null,cycles:parseInt($('#bCycles').value)||0,cycleLimit:parseInt($('#bLimit').value)||200,status:$('#bStatus').value});
+  else { const b=State.battery(id); const oldStatus=b.status; const newStatus=$('#bStatus').value;
+    Object.assign(b,{label,droneCompat:compat,purchaseDate:$('#bPurch').value||null,cycles:parseInt($('#bCycles').value)||0,cycleLimit:parseInt($('#bLimit').value)||200,status:newStatus});
     const cond=$('#bCond')?.value.trim(); if(cond){ b.conditionNotes=b.conditionNotes||[]; b.conditionNotes.push({note:cond,at:U.nowISO()}); if(b.status==='In service'){ b.status='Quarantined'; toast('Condition note added — battery quarantined'); } }
-    await saveEntity('batteries','batteries',b); }
+    await saveEntity('batteries','batteries',b);
+    if(b.status!==oldStatus && (b.status==='Quarantined'||b.status==='Retired')){
+      await logOpsManualEntry('Maintenance & Airworthiness', `Battery ${b.status.toLowerCase()} — ${label}`, cond||`Status changed ${oldStatus} → ${b.status}`, b.id);
+    } }
   await audit('save','battery',id||'new',label);
   Modal.closeAll(); await recompute(); Fleet.render(); toast('Battery saved','ok');
 };
@@ -3047,6 +3080,7 @@ Fleet.saveMaint=async function(scId){
   await saveEntity('maintRecords','maintRecords',rec);
   sc.lastDoneAt=U.nowISO(); sc.lastDoneHours=d.totalHours||0; await saveEntity('maintSchedules','maintSchedules',sc);
   await audit('maintenance','drone',d.id,sc.itemName+' completed ('+rec.id+')');
+  await logOpsManualEntry('Maintenance & Airworthiness', sc.itemName+' completed — '+d.nickname, work+(rec.parts?' · Parts: '+rec.parts:'')+' · Signed off by '+sig.by, rec.id);
   Modal.closeAll(); await recompute(); Fleet.render(); toast('Maintenance record '+rec.id+' saved','ok');
 };
 Fleet.newIssue=function(){
@@ -3063,6 +3097,7 @@ Fleet.saveIssue=async function(){
   const issue={ id:await U.seqId('MNT-ISS'), droneId, description:desc, severity:sev, raisedBy:sig.by, raisedAt:U.nowISO(), status:'Open', rectification:null, createdAt:U.nowISO(), updatedAt:U.nowISO() };
   await saveEntity('maintIssues','maintIssues',issue);
   const d=State.drone(droneId);
+  await logOpsManualEntry('Maintenance & Airworthiness', sev+' defect raised — '+d.nickname, desc+' · Raised by '+sig.by, issue.id);
   if(sev==='Grounding'){ d.status='In maintenance'; await saveEntity('drones','drones',d);
     await Alerts.raise({severity:'blocker',message:`${d.nickname}: grounding defect — ${desc.slice(0,60)}`,why:'Grounding defect: aircraft unavailable until rectified and signed off (B6).',fix:'Rectify and have the Maintenance Controller sign off.',entityType:'drone',entityId:d.id,ruleKey:'issue:'+issue.id}); }
   else await Alerts.raise({severity:'warning',message:`${d.nickname}: monitor-level defect`,why:'Open monitor-level defect — review before flight.',fix:'Rectify or acknowledge.',entityType:'drone',entityId:d.id,ruleKey:'issue:'+issue.id});
@@ -3088,7 +3123,8 @@ Fleet.saveRectify=async function(id){
   // if no more grounding issues, reactivate drone
   const d=State.drone(i.droneId);
   if(d.status==='In maintenance' && !State.maintIssues.some(x=>x.droneId===d.id&&x.severity==='Grounding'&&x.status==='Open')){ d.status='Active'; await saveEntity('drones','drones',d); }
-  await audit('rectify','drone',i.droneId,id+' rectified'); Modal.closeAll(); await recompute(); Fleet.render(); toast('Defect rectified','ok');
+  await audit('rectify','drone',i.droneId,id+' rectified');
+  await logOpsManualEntry('Maintenance & Airworthiness', 'Defect rectified — '+d.nickname, work+(i.rectification.parts?' · Parts: '+i.rectification.parts:'')+' · Signed off by '+sig.by, i.id); Modal.closeAll(); await recompute(); Fleet.render(); toast('Defect rectified','ok');
 };
 
 /* ---- Technical log ---- */
@@ -3196,6 +3232,7 @@ async function keyRoleChange(role, incoming, outgoing){
   const ev=await createChangeEvent({classification:'SIG',triggerType:'key-personnel',triggerRef:(incoming||outgoing).id,description:desc+' (CASA approval required BEFORE implementation; assessment up to 70 business days)'});
   ev.keyRole={role, incomingId:incoming?incoming.id:null, outgoingId:outgoing?outgoing.id:null};
   await saveEntity('changeEvents','changeEvents',ev);
+  await logOpsManualEntry('Personnel', desc, 'Pending CASA approval before implementation — see change event '+ev.id, (incoming||outgoing).id);
 }
 People.recency=function(id){
   const p=State.person(id);
@@ -3331,6 +3368,122 @@ Change.printRegister=function(){
 };
 
 /* ================================================================ *
+ *  OPERATIONS MANUAL — the digital RPAS Ops Manual.
+ *  Document control + a live Schedule 1 / personnel roster pulled straight
+ *  from Fleet/Personnel, plus a curated Amendment Record auto-populated by
+ *  logOpsManualEntry() at the real actions that should update the manual
+ *  (aircraft added/retired/re-serialled, maintenance/defects, personnel
+ *  changes, CASA change events, ATSB occurrences) — plus manual entries
+ *  for anything else worth recording.
+ * ================================================================ */
+const OpsManual = { catFilter:'', q:'' };
+Views.opsManual = function(){
+  const s = State.settings;
+  const activeDrones = State.drones.filter(d=>d.status!=='Retired-Sold-Written off');
+  const keyPeople = State.people.filter(p=>p.status==='Active');
+  App.set(`
+    <div class="page-head"><div class="grow"><h1>Operations Manual</h1>
+      <div class="page-sub">RPAS Operations Manual — Schedule 1, key personnel and the amendment record, kept live from the rest of this app.</div></div>
+      <div class="btn-row"><button class="btn" onclick="OpsManual.print()">🖨 Print Operations Manual</button><button class="btn primary" onclick="OpsManual.addEntry()">＋ Add manual entry</button></div></div>
+
+    <div class="card"><div class="section-title">Document control</div>
+      <div class="grid cols-2">
+        <div class="kv"><span class="k">Organisation</span><span class="v">${U.esc(s.orgName)}</span></div>
+        <div class="kv"><span class="k">ReOC number</span><span class="v">${U.esc(s.reocNumber||'—')}</span></div>
+        <div class="kv"><span class="k">Manual version</span><span class="v">${U.esc(s.opsManualVersion||'—')}</span></div>
+        <div class="kv"><span class="k">Issued</span><span class="v">${s.opsManualIssuedAt?U.fmtDate(s.opsManualIssuedAt):'—'}</span></div>
+      </div>
+      <p class="hint" style="margin-top:8px">Set the manual version and issue date in Settings ▸ Organisation. Every entry below carries its own timestamp and signatory, so the manual's currency is always evident regardless of the cover version.</p>
+    </div>
+
+    <div class="card"><div class="section-title">Schedule 1 — Aircraft (${activeDrones.length})</div>
+      <div class="tbl-wrap"><table class="data"><thead><tr><th>Callsign</th><th>Make/Model</th><th>Serial</th><th>Type/category</th><th>MTOW</th><th>Status</th></tr></thead><tbody>
+        ${activeDrones.map(d=>`<tr><td><b>${U.esc(d.nickname)}</b></td><td>${U.esc(d.make+' '+d.model)}</td><td class="mono">${U.esc(d.serial)}</td>
+          <td style="font-size:.8rem">${U.esc(d.typeCategory||'')}</td><td>${d.mtowKg!=null?d.mtowKg+' kg':'—'}</td><td>${droneStatusPill(d)}</td></tr>`).join('')||'<tr><td colspan=6 class="muted">No active aircraft.</td></tr>'}
+      </tbody></table></div>
+    </div>
+
+    <div class="card"><div class="section-title">Personnel roster (${keyPeople.length})</div>
+      <div class="tbl-wrap"><table class="data"><thead><tr><th>Name</th><th>Roles</th><th>RePL</th><th>ARN</th></tr></thead><tbody>
+        ${keyPeople.map(p=>`<tr><td><b>${U.esc(p.name)}</b>${(p.roles||[]).some(r=>KEY_ROLES.includes(r))?' <span class="pill status">key</span>':''}</td>
+          <td style="font-size:.8rem">${U.esc((p.roles||[]).join(', '))}</td><td>${U.esc(p.replNumber||'—')}</td><td>${U.esc(p.arn||'—')}</td></tr>`).join('')||'<tr><td colspan=4 class="muted">No active personnel.</td></tr>'}
+      </tbody></table></div>
+    </div>
+
+    <div class="card"><div class="section-title">Amendment record</div>
+      <div class="inline no-print" style="margin-bottom:10px">
+        <div class="field"><label>Search</label><input id="omQ" placeholder="Title, description…" oninput="OpsManual.render()"></div>
+        <div class="field"><label>Category</label><select id="omCat" onchange="OpsManual.render()"><option value="">All</option>${OPS_MANUAL_CATEGORIES.map(c=>`<option value="${c}">${c}</option>`).join('')}</select></div>
+      </div>
+      <div id="omBody"></div>
+    </div>
+  `);
+  OpsManual.render();
+};
+OpsManual.render = function(){
+  OpsManual.q = ($('#omQ')?.value||'').toLowerCase();
+  OpsManual.catFilter = $('#omCat')?.value||'';
+  let rows = [...State.opsManualEntries].sort((a,b)=>new Date(b.date)-new Date(a.date));
+  if(OpsManual.catFilter) rows = rows.filter(r=>r.category===OpsManual.catFilter);
+  if(OpsManual.q) rows = rows.filter(r=>(r.title+' '+r.description).toLowerCase().includes(OpsManual.q));
+  const el = $('#omBody'); if(!el) return;
+  if(!rows.length){ el.innerHTML = `<div class="empty">No amendment entries yet. Real actions (maintenance, defects, aircraft/personnel/procedure changes) log here automatically, or add one manually.</div>`; return; }
+  el.innerHTML = `<div class="tbl-wrap"><table class="data"><thead><tr><th>Date</th><th>Category</th><th>Entry</th><th>Recorded by</th></tr></thead><tbody>
+    ${rows.map(r=>`<tr style="cursor:pointer" onclick="OpsManual.showEntry('${r.id}')"><td>${U.fmt(r.date)}</td><td><span class="pill">${U.esc(r.category)}</span></td>
+      <td><b>${U.esc(r.title)}</b></td><td>${U.esc(r.recordedBy)}</td></tr>`).join('')}
+    </tbody></table></div>`;
+};
+OpsManual.showEntry = function(id){
+  const r = State.opsManualEntries.find(x=>x.id===id); if(!r) return;
+  const body = `
+    <div class="kv"><span class="k">ID</span><span class="v mono">${r.id}</span></div>
+    <div class="kv"><span class="k">Category</span><span class="v">${U.esc(r.category)}</span></div>
+    <div class="kv"><span class="k">Date</span><span class="v">${U.fmt(r.date)}</span></div>
+    <div class="kv"><span class="k">Title</span><span class="v" style="text-align:left;font-weight:400">${U.esc(r.title)}</span></div>
+    <div class="kv"><span class="k">Description</span><span class="v" style="text-align:left;font-weight:400">${U.esc(r.description||'—')}</span></div>
+    <div class="kv"><span class="k">Recorded by</span><span class="v">${U.esc(r.recordedBy)}</span></div>
+    ${r.reference?`<div class="kv"><span class="k">Reference</span><span class="v mono">${U.esc(r.reference)}</span></div>`:''}
+  `;
+  Modal.open({title:'Manual entry '+r.id, body, footer:`<button class="btn primary" onclick="Modal.closeAll()">Close</button>`});
+};
+OpsManual.addEntry = function(){
+  const body = `
+    <div class="field"><label class="req">Category</label><select id="omNewCat">${OPS_MANUAL_CATEGORIES.map(c=>`<option value="${c}">${c}</option>`).join('')}</select></div>
+    <div class="field"><label class="req">Title</label><input id="omNewTitle" placeholder="e.g. Updated pre-flight checklist wording"></div>
+    <div class="field"><label>Description</label><textarea id="omNewDesc" placeholder="What changed, and why"></textarea></div>
+    ${signatureFields('omNewBy', p=>true)}`;
+  Modal.open({title:'Add manual entry', body,
+    footer:`<button class="btn ghost" onclick="Modal.closeAll()">Cancel</button><button class="btn primary" onclick="OpsManual.saveEntry()">Save entry</button>`});
+};
+OpsManual.saveEntry = async function(){
+  const cat = $('#omNewCat').value, title = $('#omNewTitle').value.trim(), desc = $('#omNewDesc').value.trim();
+  if(!title){ toast('Title required','err'); return; }
+  const sig = readSignature('omNewBy'); if(!sig) return;
+  App.currentActor = sig.by;
+  await logOpsManualEntry(cat, title, desc, null);
+  await audit('add','opsManualEntry','manual',title);
+  Modal.closeAll(); OpsManual.render(); toast('Manual entry recorded','ok');
+};
+OpsManual.print = function(){
+  const s = State.settings;
+  const activeDrones = State.drones.filter(d=>d.status!=='Retired-Sold-Written off');
+  const keyPeople = State.people.filter(p=>p.status==='Active');
+  const rows = [...State.opsManualEntries].sort((a,b)=>new Date(b.date)-new Date(a.date));
+  App.el('printRoot').innerHTML = `<div class="print-doc">
+    <div class="print-head"><div class="org">${U.esc(s.orgName)}</div>
+      <div class="meta">ReOC ${U.esc(s.reocNumber||'—')} · RPAS Operations Manual · Version ${U.esc(s.opsManualVersion||'—')} · Issued ${s.opsManualIssuedAt?U.fmtDate(s.opsManualIssuedAt):'—'}</div></div>
+    <div class="print-sec"><h3>Schedule 1 — Aircraft</h3><table><tr><th>Callsign</th><th>Make/Model</th><th>Serial</th><th>Type/category</th><th>MTOW</th><th>Status</th></tr>
+      ${activeDrones.map(d=>`<tr><td>${U.esc(d.nickname)}</td><td>${U.esc(d.make+' '+d.model)}</td><td>${U.esc(d.serial)}</td><td>${U.esc(d.typeCategory||'')}</td><td>${d.mtowKg!=null?d.mtowKg+' kg':'—'}</td><td>${U.esc(d.status)}</td></tr>`).join('')}</table></div>
+    <div class="print-sec"><h3>Personnel roster</h3><table><tr><th>Name</th><th>Roles</th><th>RePL</th><th>ARN</th></tr>
+      ${keyPeople.map(p=>`<tr><td>${U.esc(p.name)}</td><td>${U.esc((p.roles||[]).join(', '))}</td><td>${U.esc(p.replNumber||'—')}</td><td>${U.esc(p.arn||'—')}</td></tr>`).join('')}</table></div>
+    <div class="print-sec"><h3>Amendment record (${rows.length} entries)</h3><table><tr><th>Date</th><th>Category</th><th>Entry</th><th>Description</th><th>Recorded by</th></tr>
+      ${rows.map(r=>`<tr><td>${U.fmt(r.date)}</td><td>${U.esc(r.category)}</td><td>${U.esc(r.title)}</td><td>${U.esc(r.description||'')}</td><td>${U.esc(r.recordedBy)}</td></tr>`).join('')}</table></div>
+    <div class="print-foot">${U.esc(s.orgName)} · RPAS Operations Manual · Printed ${U.fmt(U.nowISO())}</div>
+  </div>`;
+  window.print();
+};
+
+/* ================================================================ *
  *  SETTINGS MODULE
  * ================================================================ */
 Views.settings=function(){
@@ -3344,6 +3497,12 @@ Views.settings=function(){
       <div class="field"><label>Registered business names (comma-separated)</label><input id="setBn" value="${U.esc((s.businessNames||[]).join(', '))}"><div class="hint">Adding/removing a business name is a significant CASA change (item 5).</div></div>
       <div class="field"><label>Address</label><input id="setAddr" value="${U.esc(s.address||'')}"></div>
       <button class="btn primary" onclick="Settings.saveOrg()">Save organisation details</button>
+    </div>
+    <div class="card"><div class="section-title">Operations Manual</div>
+      <p class="muted" style="font-size:.82rem;margin-bottom:10px">Cover version/issue date for the digital Operations Manual (Ops Manual ▸ Document control). Individual entries in the amendment record carry their own timestamp regardless.</p>
+      <div class="inline"><div class="field"><label>Manual version</label><input id="setOmVer" value="${U.esc(s.opsManualVersion||'')}" placeholder="e.g. v4.1"></div>
+        <div class="field"><label>Issued</label><input type="date" id="setOmDate" value="${U.esc(s.opsManualIssuedAt?s.opsManualIssuedAt.slice(0,10):'')}"></div></div>
+      <button class="btn" onclick="Settings.saveOpsManualMeta()">Save</button>
     </div>
     <div class="card"><div class="section-title">Operational defaults</div>
       <div class="inline"><div class="field"><label>Pilot recency (days)</label><input type="number" id="setRec" value="${s.recencyDays||90}"></div>
@@ -3445,6 +3604,13 @@ Settings.syncNow=async function(){
   if(ok){ await State.loadAll(); await recompute(); toast('Synced with cloud','ok'); }
   else toast('Cloud not reachable — changes queued locally','err');
   if(App.route==='settings') Views.settings();
+};
+Settings.saveOpsManualMeta=async function(){
+  const s=State.settings; const oldVer=s.opsManualVersion;
+  s.opsManualVersion=$('#setOmVer').value.trim(); s.opsManualIssuedAt=$('#setOmDate').value||null; s.updatedAt=U.nowISO();
+  await Store.put('settings',s);
+  if(s.opsManualVersion && s.opsManualVersion!==oldVer) await logOpsManualEntry('Procedures','Operations Manual reissued — '+s.opsManualVersion,'Cover version/issue date updated in Settings.',null);
+  await audit('settings','settings','app','Ops Manual version/date updated'); toast('Saved','ok');
 };
 Settings.saveDefaults=async function(){
   const s=State.settings; s.recencyDays=parseInt($('#setRec').value)||90; s.defaultBatteryCycleLimit=parseInt($('#setBat').value)||200; s.updatedAt=U.nowISO();
