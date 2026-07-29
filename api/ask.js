@@ -17,15 +17,26 @@ const CASA_CORPUS = [
     title: "Drone weight categories and requirements",
     url: "https://www.casa.gov.au/drones/operator-accreditation-certificate/drone-weight-categories-and-requirements",
     lastUpdated: "11 Oct 2024",
-    text: `Drone weight classifications: micro = 250g or less; very small = more than 250g but not more than 2kg; small = more than 2kg but not more than 25kg; medium = more than 25kg but not more than 150kg.
+    text: `WEIGHT CATEGORY LOOKUP TABLE (compare the drone's actual weight in grams against these ranges — check the number carefully, do not skip a step):
+| Category  | Weight range                          |
+|-----------|----------------------------------------|
+| micro     | 0g to 250g (250g or less)              |
+| very small| 251g to 2,000g (over 250g, up to 2kg)  |
+| small     | 2,001g to 25,000g (over 2kg, up to 25kg)|
+| medium    | 25,001g to 150,000g (over 25kg, up to 150kg)|
 
-Micro RPA (250g or less): can be flown for business/work without a RePL or ReOC. Must: get an ARN (organisation ARN for a business), get an RPA operator accreditation, register the drone, fly within the drone safety rules.
+Worked examples (use this exact method for any weight you're given):
+- A drone weighing 734g: 734 is greater than 250 and not more than 2,000, so it is VERY SMALL category. It is NOT "small" — small only starts above 2,000g.
+- A drone weighing 907g: also VERY SMALL category (between 251g and 2,000g).
+- A drone weighing 4,250g (4.25kg): this is SMALL category (between 2,001g and 25,000g).
 
-Very small, excluded category RPA (2kg or less — "sub-2kg excluded category"): can be flown for business/work without a RePL or ReOC. Examples: photographers, real estate agents, researchers, construction/trades, government/community services. Must: get an ARN, get an RPA operator accreditation, register the drone, fly only within the standard operating conditions.
+Micro RPA (0–250g): can be flown for business/work without a RePL or ReOC. Must: get an ARN (organisation ARN for a business), get an RPA operator accreditation, register the drone, fly within the drone safety rules.
 
-Small, excluded category RPA (more than 2kg but not more than 25kg): can be flown over your OWN land for business/work without a RePL or ReOC, provided you do not accept any payment for the services ("landowner/private landholder excluded category"). Must: get an ARN, get an RPA operator accreditation, register the drone, fly within standard operating conditions, keep required operational records, not accept payment.
+Very small, excluded category RPA (251g–2kg — "sub-2kg excluded category"): can be flown for business/work without a RePL or ReOC. Examples: photographers, real estate agents, researchers, construction/trades, government/community services. Must: get an ARN, get an RPA operator accreditation, register the drone, fly only within the standard operating conditions.
 
-Medium, excluded category RPA (more than 25kg but not more than 150kg): can be flown over your own land for business/work without a ReOC (same no-payment condition), but you MUST get a RePL for the type/model of drone.
+Small, excluded category RPA (over 2kg, up to 25kg): can be flown over your OWN land for business/work without a RePL or ReOC, provided you do not accept any payment for the services ("landowner/private landholder excluded category"). Must: get an ARN, get an RPA operator accreditation, register the drone, fly within standard operating conditions, keep required operational records, not accept payment.
+
+Medium, excluded category RPA (over 25kg, up to 150kg): can be flown over your own land for business/work without a ReOC (same no-payment condition), but you MUST get a RePL for the type/model of drone.
 
 If you fly without the appropriate accreditation, or fly an unregistered RPA, penalties apply.`
   },
@@ -93,15 +104,22 @@ Non-significant changes (notify CASA within 21 days of the change; no CASA revie
   }
 ];
 
-function buildSystemPrompt(){
+function buildSystemPrompt(fleet){
   const corpusText = CASA_CORPUS.map(c =>
     `### ${c.title}\nSource: ${c.url}\nLast updated: ${c.lastUpdated}\n${c.text}`
   ).join('\n\n');
+  const fleetText = (fleet && fleet.length)
+    ? fleet.map(d => `- ${d.nickname}: ${d.make} ${d.model}, MTOW ${d.mtowKg != null ? d.mtowKg + ' kg (' + Math.round(d.mtowKg*1000) + ' g)' : 'not recorded'}, status ${d.status}`).join('\n')
+    : '(no aircraft currently registered in this app)';
   return `You are a compliance assistant embedded in a ReOC (Remote Operator's Certificate) flight-operations app for an Australian drone business regulated by CASA (Civil Aviation Safety Authority).
 
-STRICT RULE: Answer ONLY using the CASA reference material below, which was fetched directly from casa.gov.au. Do not use any other knowledge, training data, or assumptions about aviation rules — even if you believe you know the answer. If the material below does not clearly answer the question, say so plainly and tell the user to check the relevant casa.gov.au page or contact CASA directly — do not guess or fill gaps.
+STRICT RULE — SOURCE: Answer ONLY using the CASA reference material below, which was fetched directly from casa.gov.au. Do not use any other knowledge, training data, or assumptions about aviation rules — even if you believe you know the answer. If the material below does not clearly answer the question, say so plainly and tell the user to check the relevant casa.gov.au page or contact CASA directly — do not guess or fill gaps.
 
-When you do answer from the material, cite which source page(s) you used (by title) at the end of your answer.
+STRICT RULE — NUMBERS: Weight-category rules depend entirely on comparing an exact number of grams to the ranges in the lookup table below. Always do this comparison explicitly and carefully, one boundary at a time, before stating a category. Never state a category and then contradict it later in the same answer — if you find yourself about to write a category, re-check the number against the table first. Grams, not kilograms rounded loosely, decide the category.
+
+STRICT RULE — DRONE SPECS: Do not guess or recall a drone's weight from its product name (e.g. "the Mavic Pro weighs about X") — that is not CASA content and your recollection may be wrong or ambiguous (many models share similar names across product generations). Instead: (a) if the user's question matches an aircraft in "THIS OPERATOR'S REGISTERED FLEET" below, use that aircraft's actual recorded MTOW; (b) otherwise, ask the user for the drone's actual weight (from its spec sheet or the registration they'd enter in myCASA) before answering, rather than assuming a figure.
+
+When you do answer from the CASA material, cite which source page(s) you used (by title) at the end of your answer.
 
 Always end with a short reminder that this is general guidance from CASA's published pages, not a formal determination, and anything safety- or compliance-critical should be confirmed directly with CASA or myCASA.
 
@@ -109,7 +127,11 @@ Keep answers concise and plain-English — the person asking may be standing nex
 
 === CASA REFERENCE MATERIAL (snapshot, dated per page) ===
 
-${corpusText}`;
+${corpusText}
+
+=== THIS OPERATOR'S REGISTERED FLEET (from this app's own records — not CASA, but real and current) ===
+
+${fleetText}`;
 }
 
 export default async function handler(req, res) {
@@ -122,6 +144,7 @@ export default async function handler(req, res) {
   let body = req.body;
   if (typeof body === 'string') { try { body = JSON.parse(body); } catch (e) { body = {}; } }
   const question = (body && body.question || '').toString().trim().slice(0, 1000);
+  const fleet = Array.isArray(body && body.fleet) ? body.fleet.slice(0, 20) : [];
   if (!question) { res.status(400).json({ error: 'No question provided.' }); return; }
 
   try {
@@ -129,11 +152,11 @@ export default async function handler(req, res) {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },
       body: JSON.stringify({
-        model: 'gpt-4o-mini',
-        temperature: 0.2,
-        max_tokens: 500,
+        model: 'gpt-4o',
+        temperature: 0.1,
+        max_tokens: 550,
         messages: [
-          { role: 'system', content: buildSystemPrompt() },
+          { role: 'system', content: buildSystemPrompt(fleet) },
           { role: 'user', content: question }
         ]
       })

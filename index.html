@@ -1286,7 +1286,7 @@ const Guides = {
         <h4>How to record it in this app</h4>
         <p>On the flight's Post-Operation checklist, set Incidents = <b>Yes</b> ▸ severity ▸ complete the ATSB fields.</p>`,
       links: [
-        {label:'ATSB — Report an aviation occurrence', url:'https://www.atsb.gov.au/mandatory/aviation'}
+        {label:'ATSB — Report an aviation occurrence', url:'https://www.atsb.gov.au/report-atsb'}
       ]
     },
     'change-events': {
@@ -3360,7 +3360,7 @@ Views.settings=function(){
       <ul style="font-size:.86rem;line-height:1.9">
         <li><a href="https://www.casa.gov.au/drones/remotely-piloted-aircraft-operators-certificate/vary-your-reoc" target="_blank" rel="noopener">CASA — Vary your ReOC</a></li>
         <li><a href="https://mycasa.casa.gov.au/" target="_blank" rel="noopener">myCASA portal</a></li>
-        <li><a href="https://www.atsb.gov.au/mandatory/aviation" target="_blank" rel="noopener">ATSB — report an occurrence</a></li>
+        <li><a href="https://www.atsb.gov.au/report-atsb" target="_blank" rel="noopener">ATSB — report an occurrence</a></li>
         <li>OpenSky · ok2fly (airspace apps — used on device)</li>
       </ul>
     </div>
@@ -3548,7 +3548,9 @@ Assistant.send = async function(){
   Assistant.history.push({role:'bot', text:'Checking casa.gov.au…', pending:true, id:pendingId});
   Assistant.renderHistory();
   try{
-    const r = await fetch('/api/ask', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({question:q}) });
+    const fleet = (State.drones||[]).filter(d=>d.status!=='Retired-Sold-Written off')
+      .map(d=>({nickname:d.nickname, make:d.make, model:d.model, mtowKg:d.mtowKg, status:d.status}));
+    const r = await fetch('/api/ask', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({question:q, fleet}) });
     const data = await r.json().catch(()=>({}));
     const msg = Assistant.history.find(m=>m.id===pendingId);
     if(r.ok && data.answer){ msg.text = data.answer; msg.pending=false; }
