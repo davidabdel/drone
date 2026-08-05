@@ -1675,7 +1675,8 @@ function setupWizard(step, draft){
       <div class="field"><label class="req">Organisation (legal entity) name</label><input id="w_org" value="${U.esc(draft.org.orgName||'')}"></div>
       <div class="field"><label class="req">ReOC number</label><input id="w_reoc" value="${U.esc(draft.org.reocNumber||'')}"></div>
       <div class="inline"><div class="field"><label>ACN / ABN</label><input id="w_acn" value="${U.esc(draft.org.acn||'')}"></div>
-        <div class="field"><label>Registered business names (comma-separated)</label><input id="w_bn" value="${U.esc((draft.org.businessNames||[]).join(', '))}"></div></div>
+        <div class="field"><label>Organisation ARN</label><input id="w_orgarn" value="${U.esc(draft.org.orgArn||'')}"><div class="hint">The organisation's own Aviation Reference Number (myCASA), separate from each pilot's ARN.</div></div></div>
+      <div class="field"><label>Registered business names (comma-separated)</label><input id="w_bn" value="${U.esc((draft.org.businessNames||[]).join(', '))}"></div>
       <div class="field"><label>Address</label><input id="w_addr" value="${U.esc(draft.org.address||'')}"></div>
       <div class="btn-row" style="justify-content:flex-end"><button class="btn primary" onclick="wizNext(1)">Next →</button></div>`);
   } else if(step===2){
@@ -1713,7 +1714,7 @@ function wizBack(step){ setupWizard(step-1, window._wizDraft); }
 function wizNext(step){
   const d = window._wizDraft;
   if(step===1){
-    const org={ orgName:$('#w_org').value.trim(), reocNumber:$('#w_reoc').value.trim(), acn:$('#w_acn').value.trim(),
+    const org={ orgName:$('#w_org').value.trim(), reocNumber:$('#w_reoc').value.trim(), acn:$('#w_acn').value.trim(), orgArn:$('#w_orgarn').value.trim(),
       businessNames:$('#w_bn').value.split(',').map(s=>s.trim()).filter(Boolean), address:$('#w_addr').value.trim() };
     if(!org.orgName||!org.reocNumber){ toast('Organisation name and ReOC number are required','err'); return; }
     d.org=org; setupWizard(2,d);
@@ -1736,7 +1737,7 @@ async function wizFinish(){
   if(!d.drone.nickname||!d.drone.serial||!d.drone.make||!d.drone.model){ toast('Aircraft nickname, make, model and serial are required','err'); return; }
   App.currentActor = d.crp.name;
   // settings
-  const settings = { id:'app', orgName:d.org.orgName, reocNumber:d.org.reocNumber, acn:d.org.acn,
+  const settings = { id:'app', orgName:d.org.orgName, reocNumber:d.org.reocNumber, acn:d.org.acn, orgArn:d.org.orgArn,
     businessNames:d.org.businessNames, address:d.org.address, recencyDays:90, defaultBatteryCycleLimit:200,
     maintDefaults:{}, lastBackupAt:null, createdAt:U.nowISO(), updatedAt:U.nowISO() };
   await Store.put('settings', settings); State.settings=settings;
@@ -3529,6 +3530,7 @@ Views.opsManual = function(){
       <div class="grid cols-2">
         <div class="kv"><span class="k">Organisation</span><span class="v">${U.esc(s.orgName)}</span></div>
         <div class="kv"><span class="k">ReOC number</span><span class="v">${U.esc(s.reocNumber||'—')}</span></div>
+        <div class="kv"><span class="k">Organisation ARN</span><span class="v">${U.esc(s.orgArn||'—')}</span></div>
         <div class="kv"><span class="k">Manual version</span><span class="v">${U.esc(s.opsManualVersion||'—')}</span></div>
         <div class="kv"><span class="k">Issued</span><span class="v">${s.opsManualIssuedAt?U.fmtDate(s.opsManualIssuedAt):'—'}</span></div>
       </div>
@@ -3613,6 +3615,7 @@ Views.settings=function(){
       <div class="field"><label class="req">Legal entity name</label><input id="setOrg" value="${U.esc(s.orgName)}"><div class="hint">Changing the legal entity name is a significant CASA change (item 4).</div></div>
       <div class="inline"><div class="field"><label class="req">ReOC number</label><input id="setReoc" value="${U.esc(s.reocNumber||'')}"></div>
         <div class="field"><label>ACN / ABN</label><input id="setAcn" value="${U.esc(s.acn||'')}"></div></div>
+      <div class="field"><label>Organisation ARN</label><input id="setOrgArn" value="${U.esc(s.orgArn||'')}"><div class="hint">The organisation's own Aviation Reference Number (myCASA), separate from each pilot's ARN.</div></div>
       <div class="field"><label>Registered business names (comma-separated)</label><input id="setBn" value="${U.esc((s.businessNames||[]).join(', '))}"><div class="hint">Adding/removing a business name is a significant CASA change (item 5).</div></div>
       <div class="field"><label>Address</label><input id="setAddr" value="${U.esc(s.address||'')}"></div>
       <button class="btn primary" onclick="Settings.saveOrg()">Save organisation details</button>
@@ -3711,7 +3714,7 @@ Settings.saveOrg=async function(){
   const added=newBn.filter(x=>!(s.businessNames||[]).includes(x)), removed=(s.businessNames||[]).filter(x=>!newBn.includes(x));
   for(const b of added) await createChangeEvent({classification:'SIG',triggerType:'business-name',description:`Registered business name added: “${b}” (CASA approval required)`});
   for(const b of removed) await createChangeEvent({classification:'SIG',triggerType:'business-name',description:`Registered business name removed: “${b}” (CASA approval required)`});
-  Object.assign(s,{orgName:newOrg,reocNumber:newReoc,acn:$('#setAcn').value.trim(),businessNames:newBn,address:$('#setAddr').value.trim(),updatedAt:U.nowISO()});
+  Object.assign(s,{orgName:newOrg,reocNumber:newReoc,acn:$('#setAcn').value.trim(),orgArn:$('#setOrgArn').value.trim(),businessNames:newBn,address:$('#setAddr').value.trim(),updatedAt:U.nowISO()});
   await Store.put('settings',s);
   setOrgBrand(s.orgName, s.reocNumber);
   await audit('settings','settings','app','Organisation details updated');
