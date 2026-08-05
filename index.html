@@ -3447,6 +3447,23 @@ function omLivePersonnelTable(){
     ${people.map(p=>`<tr><td><b>${U.esc(p.name)}</b>${(p.roles||[]).some(r=>KEY_ROLES.includes(r))?' <span class="pill status">key</span>':''}</td><td style="font-size:.8rem">${U.esc((p.roles||[]).join(', '))}</td><td>${U.esc(p.replNumber||'—')}</td><td>${U.esc(p.arn||'—')}</td></tr>`).join('')||'<tr><td colspan=4 class="muted">No active personnel.</td></tr>'}
     </tbody></table></div></div>`;
 }
+function omLiveOrgDetailsTable(){
+  const s = State.settings || {};
+  const rows = [
+    ['Name of legal entity', s.orgName],
+    ['Trading name', (s.businessNames||[]).join(', ')],
+    ['Registered office address', s.address],
+    ['ARN', s.orgArn],
+    ['ABN', s.acn],
+    ['Operational headquarters address', s.address],
+    ['Operational headquarters phone', ''],
+    ['Operational headquarters email', '']
+  ];
+  return `<div class="om-live"><div class="om-live-tag">LIVE — FROM SETTINGS, NOT THE STATIC TEMPLATE</div>
+    <div class="tbl-wrap om-table-wrap"><table class="data om-table"><thead><tr><th>Contact details</th><th></th></tr></thead><tbody>
+    ${rows.map(([label,val])=>`<tr><td><b>${U.esc(label)}</b></td><td>${val?U.esc(val):'<span class="muted">—</span>'}</td></tr>`).join('')}
+    </tbody></table></div></div>`;
+}
 function omLiveAmendmentRecord(){
   return `<div class="om-live"><div class="om-live-tag">LIVE — AUTO-UPDATED FROM REAL ACTIONS IN THIS APP</div>
     <div class="inline no-print" style="margin-bottom:10px">
@@ -3459,6 +3476,7 @@ function omLiveAmendmentRecord(){
 // Heading id -> function producing the live HTML that replaces the corresponding
 // blank template table from the source document (found dynamically below).
 const OM_SPLICE = {
+  'organisation-details': omLiveOrgDetailsTable,
   'amendment-record': omLiveAmendmentRecord,
   'list-of-key-personnel': omLivePersonnelTable,
   'list-of-rpa-operated-by-abc-rpa': omLiveScheduleTable
